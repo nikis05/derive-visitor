@@ -1,0 +1,16 @@
+[package]
+name = "derive-visitor"
+version = "0.1.0"
+authors = ["Kit Isaev <14875494+nikis05@users.noreply.github.com>"]
+edition = "2018"
+
+[lib]
+proc_macro = true
+
+[dependencies]
+convert_case = "0.4.0"
+fallible-iterator = "0.2.0"
+itertools = "0.10.1"
+proc-macro2 = "1.0.28"
+quote = "1.0.9"
+syn = { version= "1.0.75", features = ["extra-traits"] }
