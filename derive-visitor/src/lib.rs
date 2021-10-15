@@ -1,7 +1,7 @@
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 
-pub use derive_visitor_macros::{Visitor, Walk};
+pub use derive_visitor_macros::{Drive, Visitor};
 use std::{
     any::Any,
     cell::Cell,
@@ -14,140 +14,140 @@ pub enum Op {
 }
 
 pub trait Visitor {
-    fn drive(&mut self, item: &dyn Any, op: Op);
+    fn visit(&mut self, item: &dyn Any, op: Op);
 }
 
-pub trait Walk: Any {
-    fn walk<V: Visitor>(&self, visitor: &mut V);
+pub trait Drive: Any {
+    fn drive<V: Visitor>(&self, visitor: &mut V);
 }
 
-impl<K, Val> Walk for BTreeMap<K, Val>
+impl<K, Val> Drive for BTreeMap<K, Val>
 where
-    K: Walk,
-    Val: Walk,
+    K: Drive,
+    Val: Drive,
 {
-    fn walk<V: Visitor>(&self, visitor: &mut V) {
+    fn drive<V: Visitor>(&self, visitor: &mut V) {
         for (key, value) in self.iter() {
-            key.walk(visitor);
-            value.walk(visitor);
+            key.drive(visitor);
+            value.drive(visitor);
         }
     }
 }
 
-impl<T> Walk for BTreeSet<T>
+impl<T> Drive for BTreeSet<T>
 where
-    T: Walk,
+    T: Drive,
 {
-    fn walk<V: Visitor>(&self, visitor: &mut V) {
-        self.iter().for_each(|item| item.walk(visitor));
+    fn drive<V: Visitor>(&self, visitor: &mut V) {
+        self.iter().for_each(|item| item.drive(visitor));
     }
 }
 
-impl<T> Walk for BinaryHeap<T>
+impl<T> Drive for BinaryHeap<T>
 where
-    T: Walk,
+    T: Drive,
 {
-    fn walk<V: Visitor>(&self, visitor: &mut V) {
-        self.iter().for_each(|item| item.walk(visitor));
+    fn drive<V: Visitor>(&self, visitor: &mut V) {
+        self.iter().for_each(|item| item.drive(visitor));
     }
 }
 
-impl<T> Walk for Box<T>
+impl<T> Drive for Box<T>
 where
-    T: Walk,
+    T: Drive,
 {
-    fn walk<V: Visitor>(&self, visitor: &mut V) {
-        (**self).walk(visitor);
+    fn drive<V: Visitor>(&self, visitor: &mut V) {
+        (**self).drive(visitor);
     }
 }
 
-impl<T> Walk for Cell<T>
+impl<T> Drive for Cell<T>
 where
-    T: Walk + Copy,
+    T: Drive + Copy,
 {
-    fn walk<V: Visitor>(&self, visitor: &mut V) {
-        self.get().walk(visitor);
+    fn drive<V: Visitor>(&self, visitor: &mut V) {
+        self.get().drive(visitor);
     }
 }
 
-impl<K, Val, S> Walk for HashMap<K, Val, S>
+impl<K, Val, S> Drive for HashMap<K, Val, S>
 where
-    K: Walk,
-    Val: Walk,
+    K: Drive,
+    Val: Drive,
     S: 'static,
 {
-    fn walk<V: Visitor>(&self, visitor: &mut V) {
+    fn drive<V: Visitor>(&self, visitor: &mut V) {
         for (key, value) in self.iter() {
-            key.walk(visitor);
-            value.walk(visitor);
+            key.drive(visitor);
+            value.drive(visitor);
         }
     }
 }
 
-impl<T, S> Walk for HashSet<T, S>
+impl<T, S> Drive for HashSet<T, S>
 where
-    T: Walk,
+    T: Drive,
     S: 'static,
 {
-    fn walk<V: Visitor>(&self, visitor: &mut V) {
-        self.iter().for_each(|item| item.walk(visitor));
+    fn drive<V: Visitor>(&self, visitor: &mut V) {
+        self.iter().for_each(|item| item.drive(visitor));
     }
 }
 
-impl<T> Walk for LinkedList<T>
+impl<T> Drive for LinkedList<T>
 where
-    T: Walk,
+    T: Drive,
 {
-    fn walk<V: Visitor>(&self, visitor: &mut V) {
-        self.iter().for_each(|item| item.walk(visitor));
+    fn drive<V: Visitor>(&self, visitor: &mut V) {
+        self.iter().for_each(|item| item.drive(visitor));
     }
 }
 
-impl<T> Walk for Option<T>
+impl<T> Drive for Option<T>
 where
-    T: Walk,
+    T: Drive,
 {
-    fn walk<V: Visitor>(&self, visitor: &mut V) {
+    fn drive<V: Visitor>(&self, visitor: &mut V) {
         if let Some(value) = self {
-            value.walk(visitor);
+            value.drive(visitor);
         }
     }
 }
 
-impl<T> Walk for Vec<T>
+impl<T> Drive for Vec<T>
 where
-    T: Walk,
+    T: Drive,
 {
-    fn walk<V: Visitor>(&self, visitor: &mut V) {
-        self.iter().for_each(|item| item.walk(visitor));
+    fn drive<V: Visitor>(&self, visitor: &mut V) {
+        self.iter().for_each(|item| item.drive(visitor));
     }
 }
 
-impl<T> Walk for VecDeque<T>
+impl<T> Drive for VecDeque<T>
 where
-    T: Walk,
+    T: Drive,
 {
-    fn walk<V: Visitor>(&self, visitor: &mut V) {
-        self.iter().for_each(|item| item.walk(visitor));
+    fn drive<V: Visitor>(&self, visitor: &mut V) {
+        self.iter().for_each(|item| item.drive(visitor));
     }
 }
 
-impl Walk for () {
-    fn walk<V: Visitor>(&self, _visitor: &mut V) {}
+impl Drive for () {
+    fn drive<V: Visitor>(&self, _visitor: &mut V) {}
 }
 
 macro_rules! tuple_impls {
     ( $( $( $type:ident ),+ => $( $field:tt ),+ )+ ) => {
         $(
-            impl<$( $type ),+> Walk for ($($type,)+)
+            impl<$( $type ),+> Drive for ($($type,)+)
             where
                 $(
-                    $type: Walk
+                    $type: Drive
                 ),+
             {
-                fn walk<V: Visitor>(&self, visitor: &mut V) {
+                fn drive<V: Visitor>(&self, visitor: &mut V) {
                     $(
-                        self.$field.walk(visitor);
+                        self.$field.drive(visitor);
                     )+
                 }
             }
@@ -166,23 +166,23 @@ tuple_impls! {
     T0, T1, T2, T3, T4, T5, T6, T7 => 0, 1, 2, 3, 4, 5, 6, 7
 }
 
-impl<T> Walk for [T; 0]
+impl<T> Drive for [T; 0]
 where
-    T: Walk,
+    T: Drive,
 {
-    fn walk<V: Visitor>(&self, _visitor: &mut V) {}
+    fn drive<V: Visitor>(&self, _visitor: &mut V) {}
 }
 
 macro_rules! array_impls {
     ( $( $len:expr => $( $field:expr ),+ )+ ) => {
         $(
-            impl<T> Walk for [T; $len]
+            impl<T> Drive for [T; $len]
             where
-                T: Walk
+                T: Drive
             {
-                fn walk<V: Visitor>(&self, visitor: &mut V) {
+                fn drive<V: Visitor>(&self, visitor: &mut V) {
                     $(
-                        self[$field].walk(visitor);
+                        self[$field].drive(visitor);
                     )+
                 }
             }

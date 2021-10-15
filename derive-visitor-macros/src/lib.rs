@@ -20,9 +20,9 @@ pub fn derive_visitor(input: proc_macro::TokenStream) -> proc_macro::TokenStream
     expand_with(input, impl_visitor)
 }
 
-#[proc_macro_derive(Walk, attributes(walk))]
-pub fn derive_walk(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    expand_with(input, impl_walk)
+#[proc_macro_derive(Drive, attributes(drive))]
+pub fn derive_drive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    expand_with(input, impl_drive)
 }
 
 fn expand_with(
@@ -280,7 +280,7 @@ fn impl_visitor(input: DeriveInput) -> Result<TokenStream> {
         .map(|(path, item_params)| visitor_route(&path, item_params));
     Ok(quote! {
         impl #impl_generics ::derive_visitor::Visitor for #name #ty_generics #where_clause {
-            fn drive(&mut self, item: &dyn ::std::any::Any, op: ::derive_visitor::Op) {
+            fn visit(&mut self, item: &dyn ::std::any::Any, op: ::derive_visitor::Op) {
                 #(
                     #routes
                 )*
@@ -316,8 +316,8 @@ fn visitor_route(path: &Path, item_params: VisitorItemParams) -> TokenStream {
     }
 }
 
-fn impl_walk(input: DeriveInput) -> Result<TokenStream> {
-    let mut params = Params::from_attrs(input.attrs, "walk")?;
+fn impl_drive(input: DeriveInput) -> Result<TokenStream> {
+    let mut params = Params::from_attrs(input.attrs, "drive")?;
     params.validate(&["skip"])?;
 
     let skip_visit_self = params
@@ -333,7 +333,7 @@ fn impl_walk(input: DeriveInput) -> Result<TokenStream> {
         None
     } else {
         Some(quote! {
-            ::derive_visitor::Visitor::drive(visitor, self, ::derive_visitor::Op::Enter);
+            ::derive_visitor::Visitor::visit(visitor, self, ::derive_visitor::Op::Enter);
         })
     };
 
@@ -341,13 +341,13 @@ fn impl_walk(input: DeriveInput) -> Result<TokenStream> {
         None
     } else {
         Some(quote! {
-            ::derive_visitor::Visitor::drive(visitor, self, ::derive_visitor::Op::Exit);
+            ::derive_visitor::Visitor::visit(visitor, self, ::derive_visitor::Op::Exit);
         })
     };
 
-    let walk_fields = match input.data {
-        Data::Struct(struct_) => walk_struct(struct_),
-        Data::Enum(enum_) => walk_enum(enum_),
+    let drive_fields = match input.data {
+        Data::Struct(struct_) => drive_struct(struct_),
+        Data::Enum(enum_) => drive_enum(enum_),
         Data::Union(union_) => {
             return Err(Error::new_spanned(
                 union_.union_token,
@@ -357,17 +357,17 @@ fn impl_walk(input: DeriveInput) -> Result<TokenStream> {
     }?;
 
     Ok(quote! {
-        impl #impl_generics ::derive_visitor::Walk for #name #ty_generics #where_clause {
-            fn walk<V: Visitor>(&self, visitor: &mut V) {
+        impl #impl_generics ::derive_visitor::Drive for #name #ty_generics #where_clause {
+            fn drive<V: Visitor>(&self, visitor: &mut V) {
                 #enter_self
-                #walk_fields
+                #drive_fields
                 #exit_self
             }
         }
     })
 }
 
-fn walk_struct(struct_: DataStruct) -> Result<TokenStream> {
+fn drive_struct(struct_: DataStruct) -> Result<TokenStream> {
     struct_
         .fields
         .into_iter()
@@ -377,16 +377,16 @@ fn walk_struct(struct_: DataStruct) -> Result<TokenStream> {
                 .ident
                 .clone()
                 .unwrap_or_else(|| Ident::new(&index.to_string(), Span::call_site()));
-            walk_field(&quote! { &self.#path }, field)
+            drive_field(&quote! { &self.#path }, field)
         })
         .collect()
 }
 
-fn walk_enum(enum_: DataEnum) -> Result<TokenStream> {
+fn drive_enum(enum_: DataEnum) -> Result<TokenStream> {
     let variants = enum_
         .variants
         .into_iter()
-        .map(walk_variant)
+        .map(drive_variant)
         .collect::<Result<TokenStream>>()?;
     Ok(quote! {
         match self {
@@ -396,8 +396,8 @@ fn walk_enum(enum_: DataEnum) -> Result<TokenStream> {
     })
 }
 
-fn walk_variant(variant: Variant) -> Result<TokenStream> {
-    let mut params = Params::from_attrs(variant.attrs, "walk")?;
+fn drive_variant(variant: Variant) -> Result<TokenStream> {
+    let mut params = Params::from_attrs(variant.attrs, "drive")?;
     params.validate(&["skip"])?;
     if params.param("skip")?.map(Param::unit).is_some() {
         return Ok(TokenStream::new());
@@ -409,7 +409,7 @@ fn walk_variant(variant: Variant) -> Result<TokenStream> {
         .into_iter()
         .enumerate()
         .map(|(index, field)| {
-            walk_field(
+            drive_field(
                 &field
                     .ident
                     .clone()
@@ -433,7 +433,7 @@ fn destructure_fields(fields: Fields) -> Result<TokenStream> {
                 .named
                 .into_iter()
                 .map(|field| {
-                    let mut params = Params::from_attrs(field.attrs, "walk")?;
+                    let mut params = Params::from_attrs(field.attrs, "drive")?;
                     let field_name = field.ident.unwrap();
                     Ok(if params.param("skip")?.map(Param::unit).is_some() {
                         quote! { #field_name: _ }
@@ -452,7 +452,7 @@ fn destructure_fields(fields: Fields) -> Result<TokenStream> {
                 .into_iter()
                 .enumerate()
                 .map(|(index, field)| {
-                    let mut params = Params::from_attrs(field.attrs, "walk")?;
+                    let mut params = Params::from_attrs(field.attrs, "drive")?;
                     Ok(if params.param("skip")?.map(Param::unit).is_some() {
                         quote! { _ }
                     } else {
@@ -468,20 +468,20 @@ fn destructure_fields(fields: Fields) -> Result<TokenStream> {
     })
 }
 
-fn walk_field(value_expr: &TokenStream, field: Field) -> Result<TokenStream> {
-    let mut params = Params::from_attrs(field.attrs, "walk")?;
+fn drive_field(value_expr: &TokenStream, field: Field) -> Result<TokenStream> {
+    let mut params = Params::from_attrs(field.attrs, "drive")?;
     params.validate(&["skip", "with"])?;
 
     if params.param("skip")?.map(Param::unit).is_some() {
         return Ok(TokenStream::new());
     }
 
-    let walk_fn = params.param("with")?.map_or_else(
-        || parse_str("::derive_visitor::Walk::walk"),
+    let drive_fn = params.param("with")?.map_or_else(
+        || parse_str("::derive_visitor::Drive::drive"),
         |param| param.string_literal()?.parse::<Path>(),
     )?;
 
     Ok(quote! {
-        #walk_fn(#value_expr, visitor);
+        #drive_fn(#value_expr, visitor);
     })
 }
