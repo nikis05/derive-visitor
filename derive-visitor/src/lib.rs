@@ -1,8 +1,6 @@
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 
-//! # Derive Visitor
-//!
 //! This crate derives [visitor pattern](https://rust-unofficial.github.io/patterns/patterns/behavioural/visitor.html)
 //! for arbitrary data structures. This pattern is particularly useful when dealing with complex nested data structures,
 //! abstract trees and hierarchies of all kinds.
@@ -79,7 +77,12 @@
 //! assert_eq!(counter.directories, 3);
 //! ```
 
-pub use derive_visitor_macros::{Drive, Visitor};
+/// See [Drive].
+pub use derive_visitor_macros::Drive;
+
+/// See [Visitor].
+pub use derive_visitor_macros::Visitor;
+
 use std::{
     any::Any,
     cell::Cell,
