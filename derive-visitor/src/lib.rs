@@ -27,10 +27,10 @@ where
     Val: Walk,
 {
     fn walk<V: Visitor>(&self, visitor: &mut V) {
-        self.iter().for_each(|(key, value)| {
+        for (key, value) in self.iter() {
             key.walk(visitor);
             value.walk(visitor);
-        });
+        }
     }
 }
 
@@ -77,10 +77,10 @@ where
     S: 'static,
 {
     fn walk<V: Visitor>(&self, visitor: &mut V) {
-        self.iter().for_each(|(key, value)| {
+        for (key, value) in self.iter() {
             key.walk(visitor);
             value.walk(visitor);
-        });
+        }
     }
 }
 

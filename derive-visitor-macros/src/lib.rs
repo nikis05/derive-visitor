@@ -200,7 +200,7 @@ fn impl_visitor(input: DeriveInput) -> Result<TokenStream> {
     fn visitor_method_name_from_param(param: Param, path: &Path, op: &str) -> Result<Ident> {
         match param {
             Param::StringLiteral(_, _, lit_str) => lit_str.parse(),
-            Param::Unit(_, _) => Ok(visitor_method_name_from_path(&path, op)),
+            Param::Unit(_, _) => Ok(visitor_method_name_from_path(path, op)),
             Param::NestedParams(_, span, _) => Err(Error::new(span, "invalid parameter")),
         }
     }

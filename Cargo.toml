@@ -1,2 +1,2 @@
 [workspace]
-members = ["derive-visitor-macros", "derive-visitor", "example"]
+members = ["derive-visitor-macros", "derive-visitor"]
