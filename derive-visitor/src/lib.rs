@@ -1,6 +1,84 @@
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 
+//! # Derive Visitor
+//!
+//! This crate derives [visitor pattern](https://rust-unofficial.github.io/patterns/patterns/behavioural/visitor.html)
+//! for arbitrary data structures. This pattern is particularly useful when dealing with complex nested data structures,
+//! abstract trees and hierarchies of all kinds.
+//!
+//! The main building blocks of this crate are two derivable traits:
+//! - [Visitor] implementations walk through a data structures and accumulates some information;
+//! - [Drive] implementations are data structures that know how to drive a visitor through themselves.
+//!
+//! Please refer to these traits' documentation for more details.
+//!
+//! ## Example
+//!
+//! ```
+//! use derive_visitor::{Visitor, Drive};
+//!
+//! #[derive(Drive)]
+//! struct Directory {
+//!     #[drive(skip)]
+//!     name: String,
+//!     items: Vec<DirectoryItem>,
+//! }
+//!
+//! #[derive(Drive)]
+//! enum DirectoryItem {
+//!     File(File),
+//!     Directory(Directory),
+//! }
+//!
+//! #[derive(Drive)]
+//! struct File {
+//!     #[drive(skip)]
+//!     name: String,
+//! }
+//!
+//! #[derive(Visitor, Default)]
+//! #[visitor(File(enter), Directory(enter))]
+//! struct Counter {
+//!     files: u32,
+//!     directories: u32
+//! }
+//!
+//! impl Counter {
+//!     fn enter_file(&mut self, _file: &File) {
+//!         self.files += 1;
+//!     }
+//!     fn enter_directory(&mut self, _directory: &Directory) {
+//!         self.directories += 1;
+//!     }
+//! }
+//!
+//! let mut counter = Counter::default();
+//!
+//! let example_directory = Directory {
+//!     name: "root".into(),
+//!     items: vec![
+//!         DirectoryItem::Directory(
+//!             Directory {
+//!                 name: "home".into(),
+//!                 items: vec![
+//!                     DirectoryItem::File(File { name: "README.md".into() }),
+//!                     DirectoryItem::File(File { name: "Star Wars.mov".into() })
+//!                 ]
+//!             }
+//!         ),
+//!         DirectoryItem::Directory(
+//!             Directory { name: "downloads".into(), items: vec![] }
+//!         )
+//!     ],
+//! };
+//!
+//! example_directory.drive(&mut counter);
+//!
+//! assert_eq!(counter.files, 2);
+//! assert_eq!(counter.directories, 3);
+//! ```
+
 pub use derive_visitor_macros::{Drive, Visitor};
 use std::{
     any::Any,
@@ -8,15 +86,204 @@ use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, LinkedList, VecDeque},
 };
 
-pub enum Op {
+/// An interface for visiting arbitrary data structures.
+///
+/// A visitor receives items that implement [Any], and can use dynamic dispatch
+/// to downcast them to particular types that it is interested in. In the classal
+/// visitor pattern, a Visitor has a set of separate methods to deal with each particular
+/// item type. This behavior can be implemented automatically using derive.
+///
+/// ## Derivable
+///
+/// This trait can be derived for any struct or enum. By default, the derived implementation
+/// does nothing. You need to explicitly specify what item types and / or events your visitor
+/// is interested in, using top-level attribute:
+///
+/// ```ignore
+/// #[derive(Visitor)]
+/// #[visitor(Directory, File)]
+/// struct NameValidator {
+///     errors: Vec<InvalidNameError>,
+/// }
+///
+/// impl NameValidator {
+///     fn enter_directory(&mut self, item: &Directory) {
+///         // ...your logic here
+///     }
+///     fn exit_directory(&mut self, item: &Directory) {
+///         // ...your logic here
+///     }
+///     fn enter_file(&mut self, item: &File) {
+///         // ...your logic here
+///     }
+///     fn exit_file(&mut self, item: &File) {
+///         // ...your logic here
+///     }
+/// }
+/// ```
+///
+/// ## Macro attributes
+///
+/// If your visitor is only interested in entering or exiting a particular type, but not both,
+/// you can configure the derived implementation to only call enter / exit, respectively:
+///
+/// ```ignore
+/// #[derive(Visitor)]
+/// #[visitor(Directory(enter), File(exit))]
+/// struct NameValidator {
+///     errors: Vec<InvalidNameError>,
+/// }
+///
+/// impl NameValidator {
+///     fn enter_directory(&mut self, item: &Directory) {
+///         // ...your logic here
+///     }
+///     fn exit_file(&mut self, item: &File) {
+///         // ...your logic here
+///     }
+/// }
+/// ```
+///
+/// You can also provide custom method names for each type / event:
+///
+/// ```ignore
+/// #[derive(Visitor)]
+/// #[visitor(Directory(enter="custom_enter_directory", exit="custom_exit_directory"), File)]
+/// struct NameValidator {
+///     errors: Vec<InvalidNameError>,
+/// }
+///
+/// impl NameValidator {
+///     fn custom_enter_directory(&mut self, item: &Directory) {
+///         // ...your logic here
+///     }
+///     fn custom_exit_directory(&mut self, item: &Directory) {
+///         // ...your logic here
+///     }
+///     fn enter_file(&mut self, item: &File) {
+///         // ...your logic here
+///     }
+///     fn exit_file(&mut self, item: &File) {
+///         // ...your logic here
+///     }
+/// }
+/// ```
+pub trait Visitor {
+    fn visit(&mut self, item: &dyn Any, event: Event);
+}
+
+/// Defines whether an item is being entered or exited by a visitor.
+pub enum Event {
     Enter,
     Exit,
 }
 
-pub trait Visitor {
-    fn visit(&mut self, item: &dyn Any, op: Op);
-}
-
+/// A data structure that can drive a [visitor](Visitor) through iself.
+///
+/// Derive or implement this trait for any type that you want to be able to
+/// traverse with a visitor.
+///
+/// `Drive` is implemented for most wrapping and collection types from [std],
+/// as long as their wrapped / item type implements `Drive`.
+///
+/// ## Derivable
+///
+/// This trait can be derived for any struct or enum.
+/// By default, the derived implementation will make the visitor enter `self`,
+/// then drive it through every field of `self`, and finally make it exit `self`:
+///
+/// ```ignore
+/// #[derive(Drive)]
+/// struct Directory {
+///     #[drive(skip)]
+///     name: String,
+///     items: Vec<DirectoryItem>,
+/// }
+///
+/// #[derive(Drive)]
+/// enum DirectoryItem {
+///     File(File),
+///     Directory(Directory),
+/// }
+///
+/// #[derive(Drive)]
+/// struct File {
+///     #[drive(skip)]
+///     name: String,
+/// }
+/// ```
+///
+/// ## Implementing manually
+///
+/// The following code snippet is roughly equivalent to the implementations
+/// that would be derived in the example above:
+///
+/// ```ignore
+/// impl Drive for Directory {
+///     fn drive<V: Visitor>(&self, visitor: &mut V) {
+///         visitor.visit(self, Event::Enter);
+///         self.items.drive(visitor);
+///         visitor.visit(self, Event::Exit);
+///     }
+/// }
+///
+/// impl Drive for DirectoryItem {
+///     fn drive<V: Visitor>(&self, visitor: &mut V) {
+///         visitor.visit(self, Event::Enter);
+///         match self {
+///             Self::File(file) => {
+///                 file.drive(visitor);
+///             },
+///             Self::Directory(directory) => {
+///                 directory.drive(visitor);
+///             }
+///         }
+///         visitor.visit(self, Event::Exit);
+///     }
+/// }
+///
+/// impl Drive for File {
+///     fn drive<V: Visitor>(&self, visitor: &mut V) {
+///         visitor.visit(self, Event::Enter);
+///         visitor.visit(self, Event::Exit);
+///     }
+/// }
+/// ```
+///
+/// ## Macro attributes
+///
+/// The derived implementation of `Drive` can be customized using attributes:
+///
+/// ### `#[drive(skip)]`
+///
+/// If applied to a field or an enum variant, the derived implementation won't
+/// drive the visitor through that field / variant.
+///
+/// If applied to a struct or an enum itself, the derived implementation will
+/// drive the visitor through the type's fields / variants, but won't make it
+/// enter or exit the type itself.
+///
+/// ### `#[drive(with="path")]`
+///
+/// Drive a visitor through a field using a custom function.
+/// The function must have the following signature: `fn<V: Visitor>(&T, &mut V)`.
+///
+/// In the example below, this attribute is used to customize driving through a [Vec]:
+///
+/// ```ignore
+/// #[derive(Drive)]
+/// struct Book {
+///     title: String,
+///     #[drive(with="reverse_vec_driver")]
+///     chapters: Vec<Chapter>,
+/// }
+///
+/// fn reverse_vec_driver<T, V: Visitor>(vec: &Vec<T>, visitor: &mut V) {
+///     for item in vec.iter().rev() {
+///         item.drive(visitor);
+///     }
+/// }
+/// ```
 pub trait Drive: Any {
     fn drive<V: Visitor>(&self, visitor: &mut V);
 }

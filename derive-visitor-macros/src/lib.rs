@@ -185,22 +185,22 @@ struct VisitorItemParams {
 }
 
 fn impl_visitor(input: DeriveInput) -> Result<TokenStream> {
-    fn visitor_method_name_from_path(struct_path: &Path, op: &str) -> Ident {
+    fn visitor_method_name_from_path(struct_path: &Path, event: &str) -> Ident {
         let last_segment = struct_path.segments.last().unwrap();
         Ident::new(
             &format!(
                 "{}_{}",
-                op,
+                event,
                 last_segment.ident.to_string().to_case(Case::Snake)
             ),
             Span::call_site(),
         )
     }
 
-    fn visitor_method_name_from_param(param: Param, path: &Path, op: &str) -> Result<Ident> {
+    fn visitor_method_name_from_param(param: Param, path: &Path, event: &str) -> Result<Ident> {
         match param {
             Param::StringLiteral(_, _, lit_str) => lit_str.parse(),
-            Param::Unit(_, _) => Ok(visitor_method_name_from_path(path, op)),
+            Param::Unit(_, _) => Ok(visitor_method_name_from_path(path, event)),
             Param::NestedParams(_, span, _) => Err(Error::new(span, "invalid parameter")),
         }
     }
@@ -280,7 +280,7 @@ fn impl_visitor(input: DeriveInput) -> Result<TokenStream> {
         .map(|(path, item_params)| visitor_route(&path, item_params));
     Ok(quote! {
         impl #impl_generics ::derive_visitor::Visitor for #name #ty_generics #where_clause {
-            fn visit(&mut self, item: &dyn ::std::any::Any, op: ::derive_visitor::Op) {
+            fn visit(&mut self, item: &dyn ::std::any::Any, event: ::derive_visitor::Event) {
                 #(
                     #routes
                 )*
@@ -292,14 +292,14 @@ fn impl_visitor(input: DeriveInput) -> Result<TokenStream> {
 fn visitor_route(path: &Path, item_params: VisitorItemParams) -> TokenStream {
     let enter = item_params.enter.map(|method_name| {
         quote! {
-            ::derive_visitor::Op::Enter => {
+            ::derive_visitor::Event::Enter => {
                 self.#method_name(item);
             }
         }
     });
     let exit = item_params.exit.map(|method_name| {
         quote! {
-            ::derive_visitor::Op::Exit => {
+            ::derive_visitor::Event::Exit => {
                 self.#method_name(item);
             }
         }
@@ -307,7 +307,7 @@ fn visitor_route(path: &Path, item_params: VisitorItemParams) -> TokenStream {
 
     quote! {
         if let Some(item) = <dyn ::std::any::Any>::downcast_ref::<#path>(item) {
-            match op {
+            match event {
                 #enter
                 #exit
                 _ => {}
@@ -333,7 +333,7 @@ fn impl_drive(input: DeriveInput) -> Result<TokenStream> {
         None
     } else {
         Some(quote! {
-            ::derive_visitor::Visitor::visit(visitor, self, ::derive_visitor::Op::Enter);
+            ::derive_visitor::Visitor::visit(visitor, self, ::derive_visitor::Event::Enter);
         })
     };
 
@@ -341,7 +341,7 @@ fn impl_drive(input: DeriveInput) -> Result<TokenStream> {
         None
     } else {
         Some(quote! {
-            ::derive_visitor::Visitor::visit(visitor, self, ::derive_visitor::Op::Exit);
+            ::derive_visitor::Visitor::visit(visitor, self, ::derive_visitor::Event::Exit);
         })
     };
 
