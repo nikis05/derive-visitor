@@ -1,0 +1,10 @@
+[package]
+name = "derive-visitor"
+version = "0.1.0"
+authors = ["Kit Isaev <14875494+nikis05@users.noreply.github.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+derive-visitor-macros = { version= "0.1.0", path ="../derive-visitor-macros" }

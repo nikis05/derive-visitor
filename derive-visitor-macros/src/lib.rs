@@ -10,8 +10,9 @@ use std::{
     iter::IntoIterator,
 };
 use syn::{
-    parse_macro_input, spanned::Spanned, Attribute, Data, DataEnum, DataStruct, DeriveInput, Error,
-    Field, Fields, Ident, Lit, LitStr, Meta, MetaList, NestedMeta, Path, Result, Variant,
+    parse_macro_input, parse_str, spanned::Spanned, Attribute, Data, DataEnum, DataStruct,
+    DeriveInput, Error, Field, Fields, Ident, Lit, LitStr, Meta, MetaList, NestedMeta, Path,
+    Result, Variant,
 };
 
 #[proc_macro_derive(Visitor, attributes(visitor))]
@@ -103,33 +104,19 @@ impl Params {
     fn param(&mut self, name: &str) -> Result<Option<Param>> {
         self.0
             .remove(&Ident::new(name, Span::call_site()).into())
-            .map(|meta| {
-                let path = meta.path().clone();
-                let span = meta.span();
-                match meta {
-                    Meta::Path(_) => Ok(Param::Unit(path, span)),
-                    Meta::List(meta_list) => Ok(Param::NestedParams(
-                        path,
-                        span,
-                        Params::from_meta_list(meta_list)?,
-                    )),
-                    Meta::NameValue(name_value) => {
-                        if let Lit::Str(lit_str) = name_value.lit {
-                            Ok(Param::StringLiteral(path, span, lit_str))
-                        } else {
-                            Err(Error::new_spanned(name_value, "invalid parameter"))
-                        }
-                    }
-                }
-            })
+            .map(Param::from_meta)
             .transpose()
     }
 }
 
 impl Iterator for Params {
-    type Item = Param;
+    type Item = Result<Param>;
     fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+        self.0
+            .keys()
+            .next()
+            .cloned()
+            .map(|path| Param::from_meta(self.0.remove(&path).unwrap()))
     }
 }
 
@@ -140,6 +127,25 @@ enum Param {
 }
 
 impl Param {
+    fn from_meta(meta: Meta) -> Result<Self> {
+        let path = meta.path().clone();
+        let span = meta.span();
+        match meta {
+            Meta::Path(_) => Ok(Param::Unit(path, span)),
+            Meta::List(meta_list) => Ok(Param::NestedParams(
+                path,
+                span,
+                Params::from_meta_list(meta_list)?,
+            )),
+            Meta::NameValue(name_value) => {
+                if let Lit::Str(lit_str) = name_value.lit {
+                    Ok(Param::StringLiteral(path, span, lit_str))
+                } else {
+                    Err(Error::new_spanned(name_value, "invalid parameter"))
+                }
+            }
+        }
+    }
     fn path(&self) -> &Path {
         match self {
             Self::Unit(path, _)
@@ -178,37 +184,46 @@ struct VisitorItemParams {
     exit: Option<Ident>,
 }
 
-fn visitor_method_name(struct_path: &Path, op: &str) -> Ident {
-    let last_segment = struct_path.segments.last().unwrap();
-    Ident::new(
-        &format!(
-            "{}_{}",
-            op,
-            last_segment.ident.to_string().to_case(Case::Snake)
-        ),
-        Span::call_site(),
-    )
-}
-
 fn impl_visitor(input: DeriveInput) -> Result<TokenStream> {
+    fn visitor_method_name_from_path(struct_path: &Path, op: &str) -> Ident {
+        let last_segment = struct_path.segments.last().unwrap();
+        Ident::new(
+            &format!(
+                "{}_{}",
+                op,
+                last_segment.ident.to_string().to_case(Case::Snake)
+            ),
+            Span::call_site(),
+        )
+    }
+
+    fn visitor_method_name_from_param(param: Param, path: &Path, op: &str) -> Result<Ident> {
+        match param {
+            Param::StringLiteral(_, _, lit_str) => lit_str.parse(),
+            Param::Unit(_, _) => Ok(visitor_method_name_from_path(&path, op)),
+            Param::NestedParams(_, span, _) => Err(Error::new(span, "invalid parameter")),
+        }
+    }
+
     let params = Params::from_attrs(input.attrs, "visitor")?
-        .map(|param| {
+        .map_ok(|param| {
             let path = param.path().clone();
+
             let item_params = match param {
                 Param::Unit(_, _) => VisitorItemParams {
-                    enter: Some(visitor_method_name(&path, "enter")),
-                    exit: Some(visitor_method_name(&path, "exit")),
+                    enter: Some(visitor_method_name_from_path(&path, "enter")),
+                    exit: Some(visitor_method_name_from_path(&path, "exit")),
                 },
                 Param::NestedParams(_, _, mut nested) => {
                     nested.validate(&["enter", "exit"])?;
                     VisitorItemParams {
                         enter: nested
                             .param("enter")?
-                            .map(|param| param.string_literal()?.parse())
+                            .map(|param| visitor_method_name_from_param(param, &path, "enter"))
                             .transpose()?,
                         exit: nested
                             .param("exit")?
-                            .map(|param| param.string_literal()?.parse())
+                            .map(|param| visitor_method_name_from_param(param, &path, "exit"))
                             .transpose()?,
                     }
                 }
@@ -218,6 +233,7 @@ fn impl_visitor(input: DeriveInput) -> Result<TokenStream> {
             };
             Ok((path, item_params))
         })
+        .flatten()
         .collect::<Result<HashMap<Path, VisitorItemParams>>>()?;
 
     match input.data {
@@ -387,30 +403,7 @@ fn walk_variant(variant: Variant) -> Result<TokenStream> {
         return Ok(TokenStream::new());
     }
     let name = variant.ident;
-    let destructuring = {
-        match variant.fields {
-            Fields::Named(ref fields) => {
-                let field_names = fields
-                    .named
-                    .iter()
-                    .map(|field| field.ident.as_ref().unwrap());
-                quote! {
-                    { #( #field_names ),* }
-                }
-            }
-            Fields::Unnamed(ref fields) => {
-                let field_names = fields
-                    .unnamed
-                    .iter()
-                    .enumerate()
-                    .map(|(index, _)| Ident::new(&format!("i{}", index), Span::call_site()));
-                quote! {
-                    ( #( #field_names ),* )
-                }
-            }
-            Fields::Unit => return Ok(quote! {}),
-        }
-    };
+    let destructuring = destructure_fields(variant.fields.clone())?;
     let fields = variant
         .fields
         .into_iter()
@@ -433,6 +426,48 @@ fn walk_variant(variant: Variant) -> Result<TokenStream> {
     })
 }
 
+fn destructure_fields(fields: Fields) -> Result<TokenStream> {
+    Ok(match fields {
+        Fields::Named(fields) => {
+            let field_list = fields
+                .named
+                .into_iter()
+                .map(|field| {
+                    let mut params = Params::from_attrs(field.attrs, "walk")?;
+                    let field_name = field.ident.unwrap();
+                    Ok(if params.param("skip")?.map(Param::unit).is_some() {
+                        quote! { #field_name: _ }
+                    } else {
+                        field_name.into_token_stream()
+                    })
+                })
+                .collect::<Result<Vec<TokenStream>>>()?;
+            quote! {
+                { #( #field_list ),* }
+            }
+        }
+        Fields::Unnamed(fields) => {
+            let field_list = fields
+                .unnamed
+                .into_iter()
+                .enumerate()
+                .map(|(index, field)| {
+                    let mut params = Params::from_attrs(field.attrs, "walk")?;
+                    Ok(if params.param("skip")?.map(Param::unit).is_some() {
+                        quote! { _ }
+                    } else {
+                        Ident::new(&format!("i{}", index), Span::call_site()).into_token_stream()
+                    })
+                })
+                .collect::<Result<Vec<TokenStream>>>()?;
+            quote! {
+                ( #( #field_list ),* )
+            }
+        }
+        Fields::Unit => TokenStream::new(),
+    })
+}
+
 fn walk_field(value_expr: &TokenStream, field: Field) -> Result<TokenStream> {
     let mut params = Params::from_attrs(field.attrs, "walk")?;
     params.validate(&["skip", "with"])?;
@@ -441,11 +476,10 @@ fn walk_field(value_expr: &TokenStream, field: Field) -> Result<TokenStream> {
         return Ok(TokenStream::new());
     }
 
-    let walk_fn = params
-        .param("with")?
-        .map(|param| param.string_literal()?.parse::<Path>())
-        .transpose()?
-        .unwrap_or_else(|| Ident::new("::derive_visitor::Walk::walk", Span::call_site()).into());
+    let walk_fn = params.param("with")?.map_or_else(
+        || parse_str("::derive_visitor::Walk::walk"),
+        |param| param.string_literal()?.parse::<Path>(),
+    )?;
 
     Ok(quote! {
         #walk_fn(#value_expr, visitor);
