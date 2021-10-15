@@ -1,3 +1,6 @@
+//! This is a utility crate for [derive-visitor](https://docs.rs/derive-visitor)
+//!
+
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 

@@ -1,8 +1,14 @@
 [package]
 name = "derive-visitor"
+description = "Derive visitor pattern for arbitrary data structures"
+categories = ["development-tools"]
 version = "0.1.0"
 authors = ["Kit Isaev <14875494+nikis05@users.noreply.github.com>"]
+license = "MIT"
 edition = "2018"
+documentation = "https://docs.rs/derive-visitor"
+repository = "https://github.com/nikis05/derive-visitor"
+keywords = ["visitor", "derive", "macro"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -1,7 +1,13 @@
 [package]
 name = "derive-visitor-macros"
+description = "Macros for derive-visitor package"
+categories = ["development-tools"]
 version = "0.1.0"
 authors = ["Kit Isaev <14875494+nikis05@users.noreply.github.com>"]
+license = "MIT"
+documentation = "https://docs.rs/derive-visitor"
+repository = "https://github.com/nikis05/derive-visitor"
+keywords = ["visitor", "derive", "macro"]
 edition = "2018"
 
 [lib]
