@@ -1,24 +1,18 @@
+#![warn(clippy::all)]
+#![warn(clippy::pedantic)]
+
 use convert_case::{Case, Casing};
-use fallible_iterator::FallibleIterator;
 use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
-use quote::quote;
+use quote::{quote, ToTokens};
 use std::{
-    collections::{
-        hash_map::{Entry, OccupiedEntry},
-        HashMap,
-    },
-    env::args,
+    collections::{hash_map::Entry, HashMap},
     iter::IntoIterator,
-    slice::SliceIndex,
 };
 use syn::{
-    parse_macro_input, Attribute, Data, DataEnum, DataStruct, DeriveInput, Error, Expr, ExprPath,
-    Field, Fields, Ident, Lit, Meta, MetaList, MetaNameValue, NestedMeta, Path, PathSegment,
-    Result,
+    parse_macro_input, spanned::Spanned, Attribute, Data, DataEnum, DataStruct, DeriveInput, Error,
+    Field, Fields, Ident, Lit, LitStr, Meta, MetaList, NestedMeta, Path, Result, Variant,
 };
-
-mod example;
 
 #[proc_macro_derive(Visitor, attributes(visitor))]
 pub fn derive_visitor(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -40,62 +34,144 @@ fn expand_with(
         .into()
 }
 
-fn extract_attribute(attrs: Vec<Attribute>, attr_name: &str) -> Result<Option<MetaList>> {
-    let attrs = attrs
+fn extract_meta(attrs: Vec<Attribute>, attr_name: &str) -> Result<Option<Meta>> {
+    let macro_attrs = attrs
         .into_iter()
         .filter(|attr| attr.path.is_ident(attr_name))
         .collect::<Vec<Attribute>>();
 
-    if let Some(second) = attrs.get(2) {
+    if let Some(second) = macro_attrs.get(2) {
         return Err(Error::new_spanned(second, "duplicate attribute"));
     }
 
-    if let Some(attr) = attrs.first() {
-        let meta = attr.parse_meta()?;
-        if let Meta::List(meta_list) = meta {
-            Ok(Some(meta_list))
-        } else {
-            Err(Error::new_spanned(attr, "invalid attribute"))
-        }
-    } else {
-        Ok(None)
-    }
+    macro_attrs.first().map(Attribute::parse_meta).transpose()
 }
 
-fn extract_params(
-    meta_list: &MetaList,
-    allowed_params: Option<&[&str]>,
-) -> Result<HashMap<Path, Meta>> {
-    let params = HashMap::new();
-    for nested in meta_list.nested {
-        if let NestedMeta::Meta(meta) = nested {
-            let path = meta.path();
-            if let Some(ident) = meta.path().get_ident() {
-                let param = ident.to_string();
-                if let Some(allowed_params) = allowed_params {
-                    if !allowed_params
-                        .into_iter()
-                        .any(|allowed_param| param == *allowed_param)
-                    {
-                        return Err(Error::new_spanned(ident, "unknown parameter"));
-                    }
+#[derive(Default)]
+struct Params(HashMap<Path, Meta>);
+
+impl Params {
+    fn from_attrs(attrs: Vec<Attribute>, attr_name: &str) -> Result<Self> {
+        Ok(extract_meta(attrs, attr_name)?
+            .map(|meta| {
+                if let Meta::List(meta_list) = meta {
+                    Self::from_meta_list(meta_list)
+                } else {
+                    Err(Error::new_spanned(meta, "invalid attribute"))
                 }
+            })
+            .transpose()?
+            .unwrap_or_default())
+    }
+
+    fn from_meta_list(meta_list: MetaList) -> Result<Self> {
+        let mut params = HashMap::new();
+        for meta in meta_list.nested {
+            if let NestedMeta::Meta(meta) = meta {
+                let path = meta.path();
                 let entry = params.entry(path.clone());
                 if matches!(entry, Entry::Occupied(_)) {
-                    return Err(Error::new_spanned(ident, "duplicate parameter"));
+                    return Err(Error::new_spanned(path, "duplicate parameter"));
                 }
                 entry.or_insert(meta);
             } else {
-                return Err(Error::new_spanned(path, "invalid attribute"));
+                return Err(Error::new_spanned(meta, "invalid attribute"));
             }
-        } else {
-            return Err(Error::new_spanned(nested, "invalid attribute"));
         }
+        Ok(Self(params))
     }
-    Ok(params)
+
+    fn validate(&self, allowed_params: &[&str]) -> Result<()> {
+        for path in self.0.keys() {
+            if !allowed_params
+                .iter()
+                .any(|allowed_param| path.is_ident(allowed_param))
+            {
+                return Err(Error::new_spanned(
+                    path,
+                    format!(
+                        "unknown parameter, supported: {}",
+                        Itertools::intersperse(allowed_params.iter().copied(), ", ")
+                            .collect::<String>()
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn param(&mut self, name: &str) -> Result<Option<Param>> {
+        self.0
+            .remove(&Ident::new(name, Span::call_site()).into())
+            .map(|meta| {
+                let path = meta.path().clone();
+                let span = meta.span();
+                match meta {
+                    Meta::Path(_) => Ok(Param::Unit(path, span)),
+                    Meta::List(meta_list) => Ok(Param::NestedParams(
+                        path,
+                        span,
+                        Params::from_meta_list(meta_list)?,
+                    )),
+                    Meta::NameValue(name_value) => {
+                        if let Lit::Str(lit_str) = name_value.lit {
+                            Ok(Param::StringLiteral(path, span, lit_str))
+                        } else {
+                            Err(Error::new_spanned(name_value, "invalid parameter"))
+                        }
+                    }
+                }
+            })
+            .transpose()
+    }
 }
 
-type VisitorParams = HashMap<Path, VisitorItemParams>;
+impl Iterator for Params {
+    type Item = Param;
+    fn next(&mut self) -> Option<Self::Item> {
+        todo!()
+    }
+}
+
+enum Param {
+    Unit(Path, Span),
+    StringLiteral(Path, Span, LitStr),
+    NestedParams(Path, Span, Params),
+}
+
+impl Param {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Unit(path, _)
+            | Self::StringLiteral(path, _, _)
+            | Self::NestedParams(path, _, _) => path,
+        }
+    }
+
+    fn span(&self) -> Span {
+        match self {
+            Self::Unit(_, span)
+            | Self::StringLiteral(_, span, _)
+            | Self::NestedParams(_, span, _) => *span,
+        }
+    }
+
+    fn unit(self) -> Result<()> {
+        if let Self::Unit(_, _) = self {
+            Ok(())
+        } else {
+            Err(Error::new(self.span(), "invalid parameter"))
+        }
+    }
+
+    fn string_literal(self) -> Result<LitStr> {
+        if let Self::StringLiteral(_, _, lit_str) = self {
+            Ok(lit_str)
+        } else {
+            Err(Error::new(self.span(), "invalid parameter"))
+        }
+    }
+}
 
 struct VisitorItemParams {
     enter: Option<Ident>,
@@ -115,63 +191,77 @@ fn visitor_method_name(struct_path: &Path, op: &str) -> Ident {
 }
 
 fn impl_visitor(input: DeriveInput) -> Result<TokenStream> {
-    let attibute = extract_attribute(input.attrs, "visitor")?;
-    let params = if let Some(meta_list) = attibute {
-        let params = fallible_iterator::convert(
-            extract_params(&meta_list, None)?
-                .iter()
-                .map(|param| Ok(param)),
-        )
-        .map(|(path, meta)| match meta {
-            Meta::List(meta_list) => {
-                let item_params = extract_params(meta_list, Some(&["enter", "exit"]))?;
-                fn extract_ident(
-                    item_params: &HashMap<Path, Meta>,
-                    name: &str,
-                ) -> Result<Option<Ident>> {
-                    item_params
-                        .get(&Ident::new(name, Span::call_site()).into())
-                        .map(|meta| match meta {
-                            Meta::Path(path) => Ok(visitor_method_name(path, "enter")),
-                            Meta::NameValue(name_value) => {
-                                if let Lit::Str(str) = name_value.lit {
-                                    Ok(str.parse()?)
-                                } else {
-                                    Err(Error::new_spanned(name_value.lit, "invalid attribute"))
-                                }
-                            }
-                            _ => Err(Error::new_spanned(meta, "invalid attribute")),
-                        })
-                        .transpose()
-                }
-                Ok((
-                    path,
-                    VisitorItemParams {
-                        enter: extract_ident(&item_params, "enter")?,
-                        exit: extract_ident(&item_params, "exit")?,
-                    },
-                ))
-            }
-            Meta::Path(path) => Ok((
-                path,
-                VisitorItemParams {
-                    enter: Some(visitor_method_name(path, "enter")),
-                    exit: Some(visitor_method_name(path, "exit")),
+    let params = Params::from_attrs(input.attrs, "visitor")?
+        .map(|param| {
+            let path = param.path().clone();
+            let item_params = match param {
+                Param::Unit(_, _) => VisitorItemParams {
+                    enter: Some(visitor_method_name(&path, "enter")),
+                    exit: Some(visitor_method_name(&path, "exit")),
                 },
-            )),
-            _ => return Err(Error::new_spanned(meta, "invalid attribute parameter")),
+                Param::NestedParams(_, _, mut nested) => {
+                    nested.validate(&["enter", "exit"])?;
+                    VisitorItemParams {
+                        enter: nested
+                            .param("enter")?
+                            .map(|param| param.string_literal()?.parse())
+                            .transpose()?,
+                        exit: nested
+                            .param("exit")?
+                            .map(|param| param.string_literal()?.parse())
+                            .transpose()?,
+                    }
+                }
+                Param::StringLiteral(_, _, lit) => {
+                    return Err(Error::new_spanned(lit, "invalid attribute"))
+                }
+            };
+            Ok((path, item_params))
         })
-        .collect()?;
-        params
-    } else {
-        HashMap::new()
-    };
+        .collect::<Result<HashMap<Path, VisitorItemParams>>>()?;
+
+    match input.data {
+        Data::Enum(enum_) => {
+            for variant in enum_.variants {
+                if let Some(attr) = variant.attrs.first() {
+                    return Err(Error::new_spanned(
+                        attr,
+                        "#[visitor] attribute can only be applied to enum or struct",
+                    ));
+                }
+                for field in variant.fields {
+                    if let Some(attr) = field.attrs.first() {
+                        return Err(Error::new_spanned(
+                            attr,
+                            "#[visitor] attribute can only be applied to enum or struct",
+                        ));
+                    }
+                }
+            }
+        }
+        Data::Struct(struct_) => {
+            for field in struct_.fields {
+                if let Some(attr) = field.attrs.first() {
+                    return Err(Error::new_spanned(
+                        attr,
+                        "#[visitor] attribute can only be applied to enum or struct",
+                    ));
+                }
+            }
+        }
+        Data::Union(union_) => {
+            return Err(Error::new_spanned(
+                union_.union_token,
+                "unions are not supported",
+            ))
+        }
+    }
 
     let name = input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let routes = params
         .into_iter()
-        .map(|(path, item_params)| visitor_route(path, item_params));
+        .map(|(path, item_params)| visitor_route(&path, item_params));
     Ok(quote! {
         impl #impl_generics ::derive_visitor::Visitor for #name #ty_generics #where_clause {
             fn drive(&mut self, item: &dyn ::std::any::Any, op: ::derive_visitor::Op) {
@@ -184,43 +274,46 @@ fn impl_visitor(input: DeriveInput) -> Result<TokenStream> {
 }
 
 fn visitor_route(path: &Path, item_params: VisitorItemParams) -> TokenStream {
-    let enter_route = item_params.enter.map(visitor_method_call).into_iter();
-    let exit_route = item_params.exit.map(visitor_method_call).into_iter();
-
-    fn visitor_method_call(method: Ident) -> TokenStream {
+    let enter = item_params.enter.map(|method_name| {
         quote! {
-            self.#method(item);
+            ::derive_visitor::Op::Enter => {
+                self.#method_name(item);
+            }
         }
-    }
+    });
+    let exit = item_params.exit.map(|method_name| {
+        quote! {
+            ::derive_visitor::Op::Exit => {
+                self.#method_name(item);
+            }
+        }
+    });
 
     quote! {
         if let Some(item) = <dyn ::std::any::Any>::downcast_ref::<#path>(item) {
             match op {
-                ::derive_visitor::Op::Enter => { #( #enter_route )* },
-                ::derive_visitor::Op::Exit => { #( #exit_route )* }
+                #enter
+                #exit
+                _ => {}
             }
         }
     }
 }
 
 fn impl_walk(input: DeriveInput) -> Result<TokenStream> {
-    let attr = extract_attribute(input.attrs, "walk")?;
-    let params = attr
-        .map(|attr| extract_params(&attr, Some(&["skip"])))
+    let mut params = Params::from_attrs(input.attrs, "walk")?;
+    params.validate(&["skip"])?;
+
+    let skip_visit_self = params
+        .param("skip")?
+        .map(Param::unit)
         .transpose()?
-        .unwrap_or_else(HashMap::new);
-    let skip_visit_self = {
-        match params.get(&Ident::new("skip", Span::call_site()).into()) {
-            Some(Meta::Path(_)) => true,
-            None => false,
-            Some(meta) => return Err(Error::new_spanned(meta, "invalid attribute")),
-        }
-    };
+        .is_some();
 
     let name = input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
-    let maybe_enter_self = if skip_visit_self {
+    let enter_self = if skip_visit_self {
         None
     } else {
         Some(quote! {
@@ -228,7 +321,7 @@ fn impl_walk(input: DeriveInput) -> Result<TokenStream> {
         })
     };
 
-    let maybe_exit_self = if skip_visit_self {
+    let exit_self = if skip_visit_self {
         None
     } else {
         Some(quote! {
@@ -245,91 +338,39 @@ fn impl_walk(input: DeriveInput) -> Result<TokenStream> {
                 "unions are not supported",
             ))
         }
-    };
+    }?;
 
     Ok(quote! {
         impl #impl_generics ::derive_visitor::Walk for #name #ty_generics #where_clause {
             fn walk<V: Visitor>(&self, visitor: &mut V) {
-                #maybe_enter_self
-                #maybe_exit_self
+                #enter_self
+                #walk_fields
+                #exit_self
             }
         }
     })
 }
 
 fn walk_struct(struct_: DataStruct) -> Result<TokenStream> {
-    Ok(struct_
+    struct_
         .fields
         .into_iter()
         .enumerate()
         .map(|(index, field)| {
             let path = field
                 .ident
+                .clone()
                 .unwrap_or_else(|| Ident::new(&index.to_string(), Span::call_site()));
-            walk_field(quote! { &self.#path }, field)
+            walk_field(&quote! { &self.#path }, field)
         })
-        .collect::<Result<TokenStream>>()?)
+        .collect()
 }
 
 fn walk_enum(enum_: DataEnum) -> Result<TokenStream> {
     let variants = enum_
         .variants
         .into_iter()
-        .map(|variant| {
-            let attr = extract_attribute(variant.attrs, "walk")?;
-            let params = attr
-                .map(|attr| extract_params(&attr, Some(&["skip"])))
-                .transpose()?
-                .unwrap_or_else(HashMap::new);
-            match params.get(&Ident::new("skip", Span::call_site()).into()) {
-                Some(Meta::Path(_)) => return Ok(quote! {}),
-                None => {}
-                Some(meta) => return Err(Error::new_spanned(meta, "invalid attribute")),
-            }
-            let name = variant.ident;
-            let destructuring = {
-                match variant.fields {
-                    Fields::Named(fields) => {
-                        let field_names =
-                            fields.named.into_iter().map(|field| field.ident.unwrap());
-                        quote! {
-                            { #( #field_names ),* }
-                        }
-                    }
-                    Fields::Unnamed(fields) => {
-                        let field_names =
-                            fields.unnamed.into_iter().enumerate().map(|(index, _)| {
-                                Ident::new(&format!("i{}", index), Span::call_site())
-                            });
-                        quote! {
-                            ( #( #field_names ),* )
-                        }
-                    }
-                    Fields::Unit => return Ok(quote! {}),
-                }
-            };
-            let fields = variant
-                .fields
-                .into_iter()
-                .enumerate()
-                .map(|(index, field)| {
-                    walk_field(
-                        quote! {field
-                        .ident
-                        .unwrap_or_else(|| {
-                            Ident::new(&format!("i{}", index), Span::call_site())
-                        })
-                        .into() },
-                        field,
-                    )
-                })
-                .collect::<Result<TokenStream>>()?;
-            Ok(quote! {
-                Self::#name#destructuring => {
-                    #fields
-                }
-            })
-        })
+        .map(walk_variant)
         .collect::<Result<TokenStream>>()?;
     Ok(quote! {
         match self {
@@ -339,37 +380,74 @@ fn walk_enum(enum_: DataEnum) -> Result<TokenStream> {
     })
 }
 
-fn walk_field(expr: TokenStream, field: Field) -> Result<TokenStream> {
-    let attr = extract_attribute(field.attrs, "walk")?;
-    let params = attr
-        .map(|attr| extract_params(&attr, Some(&["with", "skip"])))
-        .transpose()?
-        .unwrap_or_else(HashMap::new);
+fn walk_variant(variant: Variant) -> Result<TokenStream> {
+    let mut params = Params::from_attrs(variant.attrs, "walk")?;
+    params.validate(&["skip"])?;
+    if params.param("skip")?.map(Param::unit).is_some() {
+        return Ok(TokenStream::new());
+    }
+    let name = variant.ident;
+    let destructuring = {
+        match variant.fields {
+            Fields::Named(ref fields) => {
+                let field_names = fields
+                    .named
+                    .iter()
+                    .map(|field| field.ident.as_ref().unwrap());
+                quote! {
+                    { #( #field_names ),* }
+                }
+            }
+            Fields::Unnamed(ref fields) => {
+                let field_names = fields
+                    .unnamed
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| Ident::new(&format!("i{}", index), Span::call_site()));
+                quote! {
+                    ( #( #field_names ),* )
+                }
+            }
+            Fields::Unit => return Ok(quote! {}),
+        }
+    };
+    let fields = variant
+        .fields
+        .into_iter()
+        .enumerate()
+        .map(|(index, field)| {
+            walk_field(
+                &field
+                    .ident
+                    .clone()
+                    .unwrap_or_else(|| Ident::new(&format!("i{}", index), Span::call_site()))
+                    .to_token_stream(),
+                field,
+            )
+        })
+        .collect::<Result<TokenStream>>()?;
+    Ok(quote! {
+        Self::#name#destructuring => {
+            #fields
+        }
+    })
+}
 
-    match params.get(&Ident::new("skip", Span::call_site()).into()) {
-        Some(Meta::Path(_)) => return Ok(quote! {}),
-        None => {}
-        Some(meta) => return Err(Error::new_spanned(meta, "invalid parameter")),
+fn walk_field(value_expr: &TokenStream, field: Field) -> Result<TokenStream> {
+    let mut params = Params::from_attrs(field.attrs, "walk")?;
+    params.validate(&["skip", "with"])?;
+
+    if params.param("skip")?.map(Param::unit).is_some() {
+        return Ok(TokenStream::new());
     }
 
     let walk_fn = params
-        .get(&Ident::new("with", Span::call_site()).into())
-        .map(|meta| {
-            if let Meta::NameValue(MetaNameValue {
-                lit: Lit::Str(str),
-                eq_token: _,
-                path: _,
-            }) = meta
-            {
-                Ok(str.parse::<Path>()?)
-            } else {
-                Err(Error::new_spanned(meta, "invalid parameter"))
-            }
-        })
+        .param("with")?
+        .map(|param| param.string_literal()?.parse::<Path>())
         .transpose()?
-        .unwrap_or(Ident::new("::derive_visitor::Walk::walk", Span::call_site()).into());
+        .unwrap_or_else(|| Ident::new("::derive_visitor::Walk::walk", Span::call_site()).into());
 
     Ok(quote! {
-        #walk_fn(#expr, visitor);
+        #walk_fn(#value_expr, visitor);
     })
 }
