@@ -2,7 +2,7 @@
 name = "derive-visitor"
 description = "Derive visitor pattern for arbitrary data structures"
 categories = ["development-tools"]
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Kit Isaev <14875494+nikis05@users.noreply.github.com>"]
 license = "MIT"
 edition = "2018"
