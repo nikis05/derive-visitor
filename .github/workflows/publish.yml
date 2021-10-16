@@ -1,0 +1,15 @@
+name: Publish
+on:
+  push:
+    branches: [master]
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Log In
+        run: cargo login ${{ secrets.CRATES_ACCESS_TOKEN }}
+      - name: Publish Macros
+        run: cargo publish --manifest-path ./derive-visitor-macros/Cargo.toml || true
+      - name: Publish Main Crate
+        run: cargo publish --manifest-path ./derive-visitor/Cargo.toml || true

@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [master]
 jobs:
-  clippy:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
