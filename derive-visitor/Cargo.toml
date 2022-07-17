@@ -2,7 +2,7 @@
 name = "derive-visitor"
 description = "Derive visitor pattern for arbitrary data structures"
 categories = ["development-tools"]
-version = "0.1.2"
+version = "0.2.1"
 authors = ["Kit Isaev <14875494+nikis05@users.noreply.github.com>"]
 license = "MIT"
 edition = "2018"
@@ -13,7 +13,7 @@ keywords = ["visitor", "derive", "macro"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-derive-visitor-macros = { version = "0.1.0", path = "../derive-visitor-macros" }
+derive-visitor-macros = { version = "0.2.1", path = "../derive-visitor-macros" }
 
 [features]
 std-types-drive = []

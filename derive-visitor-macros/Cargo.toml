@@ -2,7 +2,7 @@
 name = "derive-visitor-macros"
 description = "Macros for derive-visitor package"
 categories = ["development-tools"]
-version = "0.1.2"
+version = "0.2.1"
 authors = ["Kit Isaev <14875494+nikis05@users.noreply.github.com>"]
 license = "MIT"
 documentation = "https://docs.rs/derive-visitor"
