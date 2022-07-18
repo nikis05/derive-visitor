@@ -6,7 +6,7 @@
 //! abstract trees and hierarchies of all kinds.
 //!
 //! The main building blocks of this crate are two derivable traits:
-//! - [Visitor] implementations walk through a data structures and accumulates some information;
+//! - [Visitor] implementations walk through data structures and accumulates some information;
 //! - [Drive] implementations are data structures that know how to drive a visitor through themselves.
 //!
 //! Please refer to these traits' documentation for more details.
@@ -83,6 +83,7 @@ pub use derive_visitor_macros::Drive;
 /// See [Visitor].
 pub use derive_visitor_macros::Visitor;
 
+use std::marker::PhantomData;
 use std::{
     any::Any,
     cell::Cell,
@@ -92,7 +93,7 @@ use std::{
 /// An interface for visiting arbitrary data structures.
 ///
 /// A visitor receives items that implement [Any], and can use dynamic dispatch
-/// to downcast them to particular types that it is interested in. In the classal
+/// to downcast them to particular types that it is interested in. In the classical
 /// visitor pattern, a Visitor has a set of separate methods to deal with each particular
 /// item type. This behavior can be implemented automatically using derive.
 ///
@@ -125,10 +126,23 @@ use std::{
 /// }
 /// ```
 ///
+/// ## Visitor functions / closures
+/// If your visitor is only interested in some particular type, you don't have to declare a struct,
+/// you can just create a visitor from a closure or a function, e.g.:
+///
+/// ```ignore
+/// let file_visitor = visitor_fn(|file: &File, event| {
+///     // ...your logic here
+/// });
+/// ```
+///
+/// See [visitor_fn](visitor_fn) and [visitor_enter_fn](visitor_enter_fn) for more info.
+///
 /// ## Macro attributes
 ///
-/// If your visitor is only interested in entering or exiting a particular type, but not both,
-/// you can configure the derived implementation to only call enter / exit, respectively:
+/// If your visitor is only interested in [Event::Enter](Event::Enter) or [Event::Exit](Event::Exit),
+/// you can configure the derived implementation to only call enter / exit, respectively,
+/// on a per-type basis:
 ///
 /// ```ignore
 /// #[derive(Visitor)]
@@ -173,6 +187,59 @@ use std::{
 /// ```
 pub trait Visitor {
     fn visit(&mut self, item: &dyn Any, event: Event);
+}
+
+/// Create a visitor that only visits items of some specific type from a function or a closure.
+///
+/// ## Example
+/// ```ignore
+/// let file_visitor = visitor_fn(|file: &File, event| {
+///     // ...your logic here
+/// });
+/// ```
+pub fn visitor_fn<T: Any, F: FnMut(&T, Event)>(fun: F) -> FnVisitor<T, F> {
+    FnVisitor {
+        _marker: PhantomData,
+        fun,
+    }
+}
+
+/// Similar to [visitor_fn](visitor_fn), but the closure will only be called on [Event::Enter](Event::Enter).
+pub fn visitor_enter_fn<T: Any, F: FnMut(&T)>(fun: F) -> EnterFnVisitor<T, F> {
+    EnterFnVisitor {
+        _marker: PhantomData,
+        fun,
+    }
+}
+
+/// Type returned by [visitor_fn].
+pub struct FnVisitor<T: Any, F: FnMut(&T, Event)> {
+    _marker: PhantomData<*const T>,
+    fun: F,
+}
+
+impl<T: Any, F: FnMut(&T, Event)> Visitor for FnVisitor<T, F> {
+    fn visit(&mut self, item: &dyn Any, event: Event) {
+        if let Some(item) = <dyn Any>::downcast_ref::<T>(item) {
+            let fun = &mut self.fun;
+            fun(item, event);
+        }
+    }
+}
+
+/// Type returned by [visitor_enter_fn].
+pub struct EnterFnVisitor<T: Any, F: FnMut(&T)> {
+    _marker: PhantomData<*const T>,
+    fun: F,
+}
+
+impl<T: Any, F: FnMut(&T)> Visitor for EnterFnVisitor<T, F> {
+    fn visit(&mut self, item: &dyn Any, event: Event) {
+        if let (Event::Enter, Some(item)) = (event, <dyn Any>::downcast_ref::<T>(item)) {
+            let fun = &mut self.fun;
+            fun(item);
+        }
+    }
 }
 
 /// Defines whether an item is being entered or exited by a visitor.
