@@ -1,5 +1,7 @@
 #![cfg(feature = "std-types-drive")]
 
+use std::ops::Range;
+
 use derive_visitor::{Drive, Visitor};
 
 #[derive(Default, Drive)]
@@ -14,6 +16,7 @@ struct Top {
 struct Inner {
     start: u32,
     end: u32,
+    rng: Range<u32>,
     inner_s: String,
 }
 
@@ -49,6 +52,7 @@ fn test_std_types() {
         inner: Inner {
             start: 12,
             end: 24,
+            rng: 4..6,
             inner_s: "x".into(),
         },
         s2: "zzz".into(),
@@ -60,9 +64,8 @@ fn test_std_types() {
         test_visitor,
         TestVisitor {
             all_strings: vec!["String1".into(), "x".into(), "zzz".into()],
-            sum_u32: 42,
+            sum_u32: 52,
             enter_leave_check: 0,
         }
     );
 }
-

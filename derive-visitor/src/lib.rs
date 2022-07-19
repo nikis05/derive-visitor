@@ -96,6 +96,9 @@ use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, LinkedList, VecDeque},
 };
 
+#[cfg(feature = "std-types-drive")]
+use std::ops::{Range, RangeBounds, RangeFrom, RangeInclusive, RangeTo, RangeToInclusive};
+
 /// An interface for visiting arbitrary data structures.
 ///
 /// A visitor receives items that implement [Any], and can use dynamic dispatch
@@ -582,3 +585,38 @@ trivial_impl!(char);
 trivial_impl!(bool);
 
 trivial_impl!(String);
+
+#[cfg(feature = "std-types-drive")]
+macro_rules! range_impl {
+    ( $type:ident) => {
+        impl<T: Drive> Drive for $type<T> {
+            fn drive<V: Visitor>(&self, visitor: &mut V) {
+                // This long form is needed instead of just .start and .end, because
+                // Not only does RangeFrom and RangeTo not have one of the fields, but
+                // for some reason both fields are private in RangeInclusive, and instead
+                // start() and end() functions have to be called
+                if let std::ops::Bound::Included(b) | std::ops::Bound::Excluded(b) =
+                    self.start_bound()
+                {
+                    b.drive(visitor);
+                }
+                if let std::ops::Bound::Included(b) | std::ops::Bound::Excluded(b) =
+                    self.end_bound()
+                {
+                    b.drive(visitor);
+                }
+            }
+        }
+    };
+}
+
+#[cfg(not(feature = "std-types-drive"))]
+macro_rules! range_impl {
+    ( $type:ident) => {};
+}
+
+range_impl!(Range);
+range_impl!(RangeInclusive);
+range_impl!(RangeFrom);
+range_impl!(RangeTo);
+range_impl!(RangeToInclusive);
