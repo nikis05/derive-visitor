@@ -3,9 +3,9 @@ use std::{
     collections::{HashMap, LinkedList},
 };
 
-use derive_visitor::{Drive, Visitor};
+use derive_visitor::{Drive, Visitor, DriveMut, VisitorMut};
 
-#[derive(Default, Drive)]
+#[derive(Default, Drive, DriveMut)]
 struct Top {
     tuple_field: (CountMe1, CountMe2, CountMe1, CountMe2, CountMe1, CountMe2),
     array_field: Box<[CountMe1; 5]>,
@@ -13,13 +13,14 @@ struct Top {
     map_field: HashMap<CountMe1, CountMe2>,
     option_field: Option<CountMe2>,
     list_field: LinkedList<CountMe1>,
-    cell_field: Cell<CountMe2>,
+    cell_field: Cell<CountMe1>,
 }
 
-#[derive(Default, Drive, PartialEq, Eq, Hash)]
+#[derive(Default, Drive, DriveMut, PartialEq, Eq, Hash, Copy, Clone)]
 struct CountMe1;
-#[derive(Default, Drive, Clone, Copy)]
-struct CountMe2;
+
+#[derive(Default, Drive, DriveMut, Clone, Debug, PartialEq)]
+struct CountMe2(#[drive(skip)] String);
 
 #[derive(Debug, Default, PartialEq, Eq, Visitor)]
 #[visitor(CountMe1(enter), CountMe2(enter))]
@@ -40,11 +41,11 @@ impl TestVisitor {
 #[test]
 fn test_containers() {
     let mut top = Top::default();
-    top.vec_field.push(CountMe2);
-    top.vec_field.push(CountMe2);
-    top.map_field.insert(CountMe1, CountMe2);
+    top.vec_field.push(CountMe2("hello".to_string()));
+    top.vec_field.push(CountMe2("you".to_string()));
+    top.map_field.insert(CountMe1, CountMe2("are".to_string()));
     top.list_field.push_back(CountMe1);
-    top.option_field = Some(CountMe2);
+    top.option_field = Some(CountMe2("beautiful".to_string()));
     let mut test_visitor = TestVisitor::default();
     top.drive(&mut test_visitor);
 
@@ -53,19 +54,40 @@ fn test_containers() {
     //   array: 5
     //   map: 1
     //   list: 1
-    //   SUM: 10
+    //   cell: 1
+    //   SUM: 11
     // Count2:
     //   tuple: 3
     //   vec: 2
     //   map: 1
     //   option: 1
-    //   cell: 1
-    //   SUM: 8
+    //   SUM: 7
     assert_eq!(
         test_visitor,
         TestVisitor {
-            count1: 10,
-            count2: 8
+            count1: 11,
+            count2: 7,
         }
     );
+}
+
+#[test]
+fn test_containers_mut() {
+    let mut top = Top::default();
+    top.map_field.insert(CountMe1, CountMe2("bad word".to_string()));
+    top.option_field = Some(CountMe2("worst".to_string()));
+
+    #[derive(VisitorMut)]
+    #[visitor(CountMe2(enter))]
+    struct Censor;
+
+    impl Censor {
+        fn enter_count_me_2(&mut self, me2: &mut CountMe2) {
+            me2.0 = "censored".to_string();
+        }
+    }
+
+    top.drive_mut(&mut Censor);
+    assert_eq!(top.map_field.get(&CountMe1).unwrap().0, "censored");
+    assert_eq!(top.option_field, Some(CountMe2("censored".to_string())));
 }
