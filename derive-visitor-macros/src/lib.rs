@@ -12,20 +12,27 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     iter::IntoIterator,
 };
-use syn::{
-    parse_macro_input, parse_str, spanned::Spanned, Attribute, Data, DataEnum, DataStruct,
-    DeriveInput, Error, Field, Fields, Ident, Lit, LitStr, Meta, MetaList, NestedMeta, Path,
-    Result, Variant,
-};
+use syn::{parse_macro_input, parse_str, spanned::Spanned, Attribute, Data, DataEnum, DataStruct, DeriveInput, Error, Field, Fields, Ident, Lit, LitStr, Meta, MetaList, NestedMeta, Path, Result, Variant, Member};
+use syn::token::Mut;
 
 #[proc_macro_derive(Visitor, attributes(visitor))]
 pub fn derive_visitor(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    expand_with(input, impl_visitor)
+    expand_with(input, |stream| impl_visitor(stream, false))
+}
+
+#[proc_macro_derive(VisitorMut, attributes(visitor))]
+pub fn derive_visitor_mut(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    expand_with(input, |stream| impl_visitor(stream, true))
 }
 
 #[proc_macro_derive(Drive, attributes(drive))]
 pub fn derive_drive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    expand_with(input, impl_drive)
+    expand_with(input, |stream| impl_drive(stream, false))
+}
+
+#[proc_macro_derive(DriveMut, attributes(drive))]
+pub fn derive_drive_mut(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    expand_with(input, |stream| impl_drive(stream, true))
 }
 
 fn expand_with(
@@ -187,7 +194,7 @@ struct VisitorItemParams {
     exit: Option<Ident>,
 }
 
-fn impl_visitor(input: DeriveInput) -> Result<TokenStream> {
+fn impl_visitor(input: DeriveInput, mutable: bool) -> Result<TokenStream> {
     fn visitor_method_name_from_path(struct_path: &Path, event: &str) -> Ident {
         let last_segment = struct_path.segments.last().unwrap();
         Ident::new(
@@ -231,7 +238,7 @@ fn impl_visitor(input: DeriveInput) -> Result<TokenStream> {
                     }
                 }
                 Param::StringLiteral(_, _, lit) => {
-                    return Err(Error::new_spanned(lit, "invalid attribute"))
+                    return Err(Error::new_spanned(lit, "invalid attribute"));
                 }
             };
             Ok((path, item_params))
@@ -272,7 +279,7 @@ fn impl_visitor(input: DeriveInput) -> Result<TokenStream> {
             return Err(Error::new_spanned(
                 union_.union_token,
                 "unions are not supported",
-            ))
+            ));
         }
     }
 
@@ -280,10 +287,12 @@ fn impl_visitor(input: DeriveInput) -> Result<TokenStream> {
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let routes = params
         .into_iter()
-        .map(|(path, item_params)| visitor_route(&path, item_params));
+        .map(|(path, item_params)| visitor_route(&path, item_params, mutable));
+    let impl_trait = Ident::new(if mutable { "VisitorMut" } else { "Visitor" }, Span::call_site());
+    let mut_modifier = if mutable { Some(Mut(Span::call_site())) } else { None };
     Ok(quote! {
-        impl #impl_generics ::derive_visitor::Visitor for #name #ty_generics #where_clause {
-            fn visit(&mut self, item: &dyn ::std::any::Any, event: ::derive_visitor::Event) {
+        impl #impl_generics ::derive_visitor::#impl_trait for #name #ty_generics #where_clause {
+            fn visit(&mut self, item: & #mut_modifier dyn ::std::any::Any, event: ::derive_visitor::Event) {
                 #(
                     #routes
                 )*
@@ -292,7 +301,7 @@ fn impl_visitor(input: DeriveInput) -> Result<TokenStream> {
     })
 }
 
-fn visitor_route(path: &Path, item_params: VisitorItemParams) -> TokenStream {
+fn visitor_route(path: &Path, item_params: VisitorItemParams, mutable: bool) -> TokenStream {
     let enter = item_params.enter.map(|method_name| {
         quote! {
             ::derive_visitor::Event::Enter => {
@@ -308,8 +317,10 @@ fn visitor_route(path: &Path, item_params: VisitorItemParams) -> TokenStream {
         }
     });
 
+    let method = Ident::new(if mutable { "downcast_mut" } else { "downcast_ref" }, Span::call_site());
+
     quote! {
-        if let Some(item) = <dyn ::std::any::Any>::downcast_ref::<#path>(item) {
+        if let Some(item) = <dyn ::std::any::Any>::#method::<#path>(item) {
             match event {
                 #enter
                 #exit
@@ -319,7 +330,7 @@ fn visitor_route(path: &Path, item_params: VisitorItemParams) -> TokenStream {
     }
 }
 
-fn impl_drive(input: DeriveInput) -> Result<TokenStream> {
+fn impl_drive(input: DeriveInput, mutable: bool) -> Result<TokenStream> {
     let mut params = Params::from_attrs(input.attrs, "drive")?;
     params.validate(&["skip"])?;
 
@@ -332,11 +343,13 @@ fn impl_drive(input: DeriveInput) -> Result<TokenStream> {
     let name = input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
+    let visitor = Ident::new(if mutable { "VisitorMut" } else { "Visitor" }, Span::call_site());
+
     let enter_self = if skip_visit_self {
         None
     } else {
         Some(quote! {
-            ::derive_visitor::Visitor::visit(visitor, self, ::derive_visitor::Event::Enter);
+            ::derive_visitor::#visitor::visit(visitor, self, ::derive_visitor::Event::Enter);
         })
     };
 
@@ -344,24 +357,28 @@ fn impl_drive(input: DeriveInput) -> Result<TokenStream> {
         None
     } else {
         Some(quote! {
-            ::derive_visitor::Visitor::visit(visitor, self, ::derive_visitor::Event::Exit);
+            ::derive_visitor::#visitor::visit(visitor, self, ::derive_visitor::Event::Exit);
         })
     };
 
     let drive_fields = match input.data {
-        Data::Struct(struct_) => drive_struct(struct_),
-        Data::Enum(enum_) => drive_enum(enum_),
+        Data::Struct(struct_) => drive_struct(struct_, mutable),
+        Data::Enum(enum_) => drive_enum(enum_, mutable),
         Data::Union(union_) => {
             return Err(Error::new_spanned(
                 union_.union_token,
                 "unions are not supported",
-            ))
+            ));
         }
     }?;
 
+    let impl_trait = Ident::new(if mutable { "DriveMut" } else { "Drive" }, Span::call_site());
+    let method = Ident::new(if mutable { "drive_mut" } else { "drive" }, Span::call_site());
+    let mut_modifier = if mutable { Some(Mut(Span::call_site())) } else { None };
+
     Ok(quote! {
-        impl #impl_generics ::derive_visitor::Drive for #name #ty_generics #where_clause {
-            fn drive<V: Visitor>(&self, visitor: &mut V) {
+        impl #impl_generics ::derive_visitor::#impl_trait for #name #ty_generics #where_clause {
+            fn #method<V: ::derive_visitor::#visitor>(& #mut_modifier self, visitor: &mut V) {
                 #enter_self
                 #drive_fields
                 #exit_self
@@ -370,26 +387,30 @@ fn impl_drive(input: DeriveInput) -> Result<TokenStream> {
     })
 }
 
-fn drive_struct(struct_: DataStruct) -> Result<TokenStream> {
+fn drive_struct(struct_: DataStruct, mutable: bool) -> Result<TokenStream> {
     struct_
         .fields
         .into_iter()
         .enumerate()
         .map(|(index, field)| {
-            let path = field
+            let member = field
                 .ident
-                .clone()
-                .unwrap_or_else(|| Ident::new(&index.to_string(), Span::call_site()));
-            drive_field(&quote! { &self.#path }, field)
+                .as_ref()
+                .map_or_else(
+                    || Member::Unnamed(index.into()),
+                    |ident| Member::Named(ident.clone()),
+                );
+            let mut_modifier = if mutable { Some(Mut(Span::call_site())) } else { None };
+            drive_field(&quote! { & #mut_modifier self.#member }, field, mutable)
         })
         .collect()
 }
 
-fn drive_enum(enum_: DataEnum) -> Result<TokenStream> {
+fn drive_enum(enum_: DataEnum, mutable: bool) -> Result<TokenStream> {
     let variants = enum_
         .variants
         .into_iter()
-        .map(drive_variant)
+        .map(|x| drive_variant(x, mutable))
         .collect::<Result<TokenStream>>()?;
     Ok(quote! {
         match self {
@@ -399,7 +420,7 @@ fn drive_enum(enum_: DataEnum) -> Result<TokenStream> {
     })
 }
 
-fn drive_variant(variant: Variant) -> Result<TokenStream> {
+fn drive_variant(variant: Variant, mutable: bool) -> Result<TokenStream> {
     let mut params = Params::from_attrs(variant.attrs, "drive")?;
     params.validate(&["skip"])?;
     if params.param("skip")?.map(Param::unit).is_some() {
@@ -419,6 +440,7 @@ fn drive_variant(variant: Variant) -> Result<TokenStream> {
                     .unwrap_or_else(|| Ident::new(&format!("i{}", index), Span::call_site()))
                     .to_token_stream(),
                 field,
+                mutable
             )
         })
         .collect::<Result<TokenStream>>()?;
@@ -471,7 +493,7 @@ fn destructure_fields(fields: Fields) -> Result<TokenStream> {
     })
 }
 
-fn drive_field(value_expr: &TokenStream, field: Field) -> Result<TokenStream> {
+fn drive_field(value_expr: &TokenStream, field: Field, mutable: bool) -> Result<TokenStream> {
     let mut params = Params::from_attrs(field.attrs, "drive")?;
     params.validate(&["skip", "with"])?;
 
@@ -480,7 +502,9 @@ fn drive_field(value_expr: &TokenStream, field: Field) -> Result<TokenStream> {
     }
 
     let drive_fn = params.param("with")?.map_or_else(
-        || parse_str("::derive_visitor::Drive::drive"),
+        || parse_str(
+            if mutable { "::derive_visitor::DriveMut::drive_mut" } else { "::derive_visitor::Drive::drive" }
+        ),
         |param| param.string_literal()?.parse::<Path>(),
     )?;
 
