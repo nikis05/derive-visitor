@@ -137,7 +137,6 @@ pub use derive_visitor_macros::Visitor;
 /// See [`VisitorMut`].
 pub use derive_visitor_macros::VisitorMut;
 
-
 use std::{any::Any, cell::Cell, marker::PhantomData};
 
 #[cfg(feature = "std-types-drive")]
@@ -285,7 +284,6 @@ pub fn visitor_fn<T, F: FnMut(&T, Event)>(fun: F) -> FnVisitor<T, F> {
     }
 }
 
-
 /// Create a visitor that only visits items and mutates them with the given function
 ///
 /// ## Example
@@ -306,14 +304,20 @@ pub fn visitor_fn_mut<T, F: FnMut(&mut T, Event)>(fun: F) -> FnVisitor<T, F> {
 /// Similar to [visitor_fn](visitor_fn), but the closure will only be called on [Event::Enter](Event::Enter).
 pub fn visitor_enter_fn<T, F: FnMut(&T)>(mut fun: F) -> FnVisitor<T, impl FnMut(&T, Event)> {
     visitor_fn(move |item, event| {
-        if let Event::Enter = event { fun(item); }
+        if let Event::Enter = event {
+            fun(item);
+        }
     })
 }
 
 /// Similar to [`visitor_fn_mut`], but the closure will only be called on [Event::Enter](Event::Enter).
-pub fn visitor_enter_fn_mut<T, F: FnMut(&mut T)>(mut fun: F) -> FnVisitor<T, impl FnMut(&mut T, Event)> {
+pub fn visitor_enter_fn_mut<T, F: FnMut(&mut T)>(
+    mut fun: F,
+) -> FnVisitor<T, impl FnMut(&mut T, Event)> {
     visitor_fn_mut(move |item, event| {
-        if let Event::Enter = event { fun(item); }
+        if let Event::Enter = event {
+            fun(item);
+        }
     })
 }
 
@@ -532,12 +536,12 @@ impl<TK, TV: DriveMut> DerefAndDriveMut for (TK, &mut TV) {
 //
 // It even handles Option, since it has a trivial IntoIterator impl.
 impl<T> Drive for T
-    where
-        T: 'static,
+where
+    T: 'static,
     // HRTB, because this needs to be true for late-bound lifetimes,
     // as both &self and &visitor have anonymous lifetimes.
-        for<'a> &'a T: IntoIterator,
-        for<'a> <&'a T as IntoIterator>::Item: DerefAndDrive,
+    for<'a> &'a T: IntoIterator,
+    for<'a> <&'a T as IntoIterator>::Item: DerefAndDrive,
 {
     fn drive<V: Visitor>(&self, visitor: &mut V) {
         for item in self {
@@ -547,10 +551,10 @@ impl<T> Drive for T
 }
 
 impl<T> DriveMut for T
-    where
-        T: 'static,
-        for<'a> &'a mut T: IntoIterator,
-        for<'a> <&'a mut T as IntoIterator>::Item: DerefAndDriveMut,
+where
+    T: 'static,
+    for<'a> &'a mut T: IntoIterator,
+    for<'a> <&'a mut T as IntoIterator>::Item: DerefAndDriveMut,
 {
     fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) {
         for item in self {
@@ -559,58 +563,89 @@ impl<T> DriveMut for T
     }
 }
 
-impl<T> Drive for Box<T> where T: Drive {
+impl<T> Drive for Box<T>
+where
+    T: Drive,
+{
     fn drive<V: Visitor>(&self, visitor: &mut V) {
         (**self).drive(visitor);
     }
 }
 
-impl<T> DriveMut for Box<T> where T: DriveMut {
-    fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) { (**self).drive_mut(visitor); }
+impl<T> DriveMut for Box<T>
+where
+    T: DriveMut,
+{
+    fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) {
+        (**self).drive_mut(visitor);
+    }
 }
 
-impl<T> Drive for Arc<T> where T: Drive {
+impl<T> Drive for Arc<T>
+where
+    T: Drive,
+{
     fn drive<V: Visitor>(&self, visitor: &mut V) {
         (**self).drive(visitor);
     }
 }
 
-impl<T> Drive for Mutex<T> where T: Drive {
+impl<T> Drive for Mutex<T>
+where
+    T: Drive,
+{
     fn drive<V: Visitor>(&self, visitor: &mut V) {
         let lock = self.lock().unwrap();
         lock.drive(visitor);
     }
 }
 
-impl<T> Drive for RwLock<T> where T: Drive {
+impl<T> Drive for RwLock<T>
+where
+    T: Drive,
+{
     fn drive<V: Visitor>(&self, visitor: &mut V) {
         let lock = self.read().unwrap();
         lock.drive(visitor);
     }
 }
 
-impl<T> DriveMut for Arc<Mutex<T>> where T: DriveMut {
+impl<T> DriveMut for Arc<Mutex<T>>
+where
+    T: DriveMut,
+{
     fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) {
         let mut lock = self.lock().unwrap();
         lock.drive_mut(visitor);
     }
 }
 
-impl<T> DriveMut for Arc<RwLock<T>> where T: DriveMut {
+impl<T> DriveMut for Arc<RwLock<T>>
+where
+    T: DriveMut,
+{
     fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) {
         let mut lock = self.write().unwrap();
         lock.drive_mut(visitor);
     }
 }
 
-impl<T> Drive for Cell<T> where T: Drive + Copy {
+impl<T> Drive for Cell<T>
+where
+    T: Drive + Copy,
+{
     fn drive<V: Visitor>(&self, visitor: &mut V) {
         self.get().drive(visitor);
     }
 }
 
-impl<T> DriveMut for Cell<T> where T: DriveMut {
-    fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) { self.get_mut().drive_mut(visitor); }
+impl<T> DriveMut for Cell<T>
+where
+    T: DriveMut,
+{
+    fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) {
+        self.get_mut().drive_mut(visitor);
+    }
 }
 
 impl Drive for () {
@@ -771,11 +806,13 @@ mod drive_ranges {
         }
     }
 
-
     // Unfortunately, RangeInclusive does not give mutable access to its bounds, so we have to
     // add a T: Default constraint in order to have something to put into the old range while we are changing the bounds.
     // This should not cause issues in practice, because ranges of non-Default values are rare.
-    impl<T: DriveMut> DriveMut for RangeInclusive<T> where T: Default {
+    impl<T: DriveMut> DriveMut for RangeInclusive<T>
+    where
+        T: Default,
+    {
         fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) {
             let placeholder = RangeInclusive::new(T::default(), T::default());
             let bounds = std::mem::replace(self, placeholder);

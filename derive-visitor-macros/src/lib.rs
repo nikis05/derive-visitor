@@ -12,8 +12,12 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     iter::IntoIterator,
 };
-use syn::{parse_macro_input, parse_str, spanned::Spanned, Attribute, Data, DataEnum, DataStruct, DeriveInput, Error, Field, Fields, Ident, Lit, LitStr, Meta, MetaList, NestedMeta, Path, Result, Variant, Member};
 use syn::token::Mut;
+use syn::{
+    parse_macro_input, parse_str, spanned::Spanned, Attribute, Data, DataEnum, DataStruct,
+    DeriveInput, Error, Field, Fields, Ident, Lit, LitStr, Member, Meta, MetaList, NestedMeta,
+    Path, Result, Variant,
+};
 
 #[proc_macro_derive(Visitor, attributes(visitor))]
 pub fn derive_visitor(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -194,27 +198,27 @@ struct VisitorItemParams {
     exit: Option<Ident>,
 }
 
+fn visitor_method_name_from_path(struct_path: &Path, event: &str) -> Ident {
+    let last_segment = struct_path.segments.last().unwrap();
+    Ident::new(
+        &format!(
+            "{}_{}",
+            event,
+            last_segment.ident.to_string().to_case(Case::Snake)
+        ),
+        Span::call_site(),
+    )
+}
+
+fn visitor_method_name_from_param(param: Param, path: &Path, event: &str) -> Result<Ident> {
+    match param {
+        Param::StringLiteral(_, _, lit_str) => lit_str.parse(),
+        Param::Unit(_, _) => Ok(visitor_method_name_from_path(path, event)),
+        Param::NestedParams(_, span, _) => Err(Error::new(span, "invalid parameter")),
+    }
+}
+
 fn impl_visitor(input: DeriveInput, mutable: bool) -> Result<TokenStream> {
-    fn visitor_method_name_from_path(struct_path: &Path, event: &str) -> Ident {
-        let last_segment = struct_path.segments.last().unwrap();
-        Ident::new(
-            &format!(
-                "{}_{}",
-                event,
-                last_segment.ident.to_string().to_case(Case::Snake)
-            ),
-            Span::call_site(),
-        )
-    }
-
-    fn visitor_method_name_from_param(param: Param, path: &Path, event: &str) -> Result<Ident> {
-        match param {
-            Param::StringLiteral(_, _, lit_str) => lit_str.parse(),
-            Param::Unit(_, _) => Ok(visitor_method_name_from_path(path, event)),
-            Param::NestedParams(_, span, _) => Err(Error::new(span, "invalid parameter")),
-        }
-    }
-
     let params = Params::from_attrs(input.attrs, "visitor")?
         .map_ok(|param| {
             let path = param.path().clone();
@@ -288,8 +292,15 @@ fn impl_visitor(input: DeriveInput, mutable: bool) -> Result<TokenStream> {
     let routes = params
         .into_iter()
         .map(|(path, item_params)| visitor_route(&path, item_params, mutable));
-    let impl_trait = Ident::new(if mutable { "VisitorMut" } else { "Visitor" }, Span::call_site());
-    let mut_modifier = if mutable { Some(Mut(Span::call_site())) } else { None };
+    let impl_trait = Ident::new(
+        if mutable { "VisitorMut" } else { "Visitor" },
+        Span::call_site(),
+    );
+    let mut_modifier = if mutable {
+        Some(Mut(Span::call_site()))
+    } else {
+        None
+    };
     Ok(quote! {
         impl #impl_generics ::derive_visitor::#impl_trait for #name #ty_generics #where_clause {
             fn visit(&mut self, item: & #mut_modifier dyn ::std::any::Any, event: ::derive_visitor::Event) {
@@ -317,7 +328,14 @@ fn visitor_route(path: &Path, item_params: VisitorItemParams, mutable: bool) -> 
         }
     });
 
-    let method = Ident::new(if mutable { "downcast_mut" } else { "downcast_ref" }, Span::call_site());
+    let method = Ident::new(
+        if mutable {
+            "downcast_mut"
+        } else {
+            "downcast_ref"
+        },
+        Span::call_site(),
+    );
 
     quote! {
         if let Some(item) = <dyn ::std::any::Any>::#method::<#path>(item) {
@@ -343,7 +361,10 @@ fn impl_drive(input: DeriveInput, mutable: bool) -> Result<TokenStream> {
     let name = input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
-    let visitor = Ident::new(if mutable { "VisitorMut" } else { "Visitor" }, Span::call_site());
+    let visitor = Ident::new(
+        if mutable { "VisitorMut" } else { "Visitor" },
+        Span::call_site(),
+    );
 
     let enter_self = if skip_visit_self {
         None
@@ -372,9 +393,19 @@ fn impl_drive(input: DeriveInput, mutable: bool) -> Result<TokenStream> {
         }
     }?;
 
-    let impl_trait = Ident::new(if mutable { "DriveMut" } else { "Drive" }, Span::call_site());
-    let method = Ident::new(if mutable { "drive_mut" } else { "drive" }, Span::call_site());
-    let mut_modifier = if mutable { Some(Mut(Span::call_site())) } else { None };
+    let impl_trait = Ident::new(
+        if mutable { "DriveMut" } else { "Drive" },
+        Span::call_site(),
+    );
+    let method = Ident::new(
+        if mutable { "drive_mut" } else { "drive" },
+        Span::call_site(),
+    );
+    let mut_modifier = if mutable {
+        Some(Mut(Span::call_site()))
+    } else {
+        None
+    };
 
     Ok(quote! {
         impl #impl_generics ::derive_visitor::#impl_trait for #name #ty_generics #where_clause {
@@ -393,14 +424,15 @@ fn drive_struct(struct_: DataStruct, mutable: bool) -> Result<TokenStream> {
         .into_iter()
         .enumerate()
         .map(|(index, field)| {
-            let member = field
-                .ident
-                .as_ref()
-                .map_or_else(
-                    || Member::Unnamed(index.into()),
-                    |ident| Member::Named(ident.clone()),
-                );
-            let mut_modifier = if mutable { Some(Mut(Span::call_site())) } else { None };
+            let member = field.ident.as_ref().map_or_else(
+                || Member::Unnamed(index.into()),
+                |ident| Member::Named(ident.clone()),
+            );
+            let mut_modifier = if mutable {
+                Some(Mut(Span::call_site()))
+            } else {
+                None
+            };
             drive_field(&quote! { & #mut_modifier self.#member }, field, mutable)
         })
         .collect()
@@ -440,7 +472,7 @@ fn drive_variant(variant: Variant, mutable: bool) -> Result<TokenStream> {
                     .unwrap_or_else(|| Ident::new(&format!("i{}", index), Span::call_site()))
                     .to_token_stream(),
                 field,
-                mutable
+                mutable,
             )
         })
         .collect::<Result<TokenStream>>()?;
@@ -502,9 +534,13 @@ fn drive_field(value_expr: &TokenStream, field: Field, mutable: bool) -> Result<
     }
 
     let drive_fn = params.param("with")?.map_or_else(
-        || parse_str(
-            if mutable { "::derive_visitor::DriveMut::drive_mut" } else { "::derive_visitor::Drive::drive" }
-        ),
+        || {
+            parse_str(if mutable {
+                "::derive_visitor::DriveMut::drive_mut"
+            } else {
+                "::derive_visitor::Drive::drive"
+            })
+        },
         |param| param.string_literal()?.parse::<Path>(),
     )?;
 

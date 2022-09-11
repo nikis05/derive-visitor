@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, LinkedList},
 };
 
-use derive_visitor::{Drive, Visitor, DriveMut, VisitorMut};
+use derive_visitor::{Drive, DriveMut, Visitor, VisitorMut};
 
 #[derive(Default, Drive, DriveMut)]
 struct Top {
@@ -74,7 +74,8 @@ fn test_containers() {
 #[test]
 fn test_containers_mut() {
     let mut top = Top::default();
-    top.map_field.insert(CountMe1, CountMe2("bad word".to_string()));
+    top.map_field
+        .insert(CountMe1, CountMe2("bad word".to_string()));
     top.option_field = Some(CountMe2("worst".to_string()));
 
     #[derive(VisitorMut)]
