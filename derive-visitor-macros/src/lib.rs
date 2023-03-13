@@ -12,11 +12,14 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     iter::IntoIterator,
 };
-use syn::token::Mut;
+use syn::parse::ParseStream;
+use syn::punctuated::Punctuated;
+use syn::token::{Colon, Mut};
 use syn::{
     parse_macro_input, parse_str, spanned::Spanned, Attribute, Data, DataEnum, DataStruct,
-    DeriveInput, Error, Field, Fields, Ident, Lit, LitStr, Member, Meta, MetaList, NestedMeta,
-    Path, Result, Variant,
+    DeriveInput, Error, Field, Fields, GenericArgument, Ident, Lit, LitStr, Member, Meta, MetaList,
+    NestedMeta, Path, PathArguments, PathSegment, Result, TraitBound, TraitBoundModifier, Type,
+    TypeParamBound, Variant,
 };
 
 #[proc_macro_derive(Visitor, attributes(visitor))]
@@ -49,8 +52,14 @@ fn expand_with(
         .into()
 }
 
+fn parse_meta(attr: Attribute) -> syn::Result<Meta> {
+    let path = attr.path;
+    let parser = |input: ParseStream| parsing::parse_meta_after_path(path, input);
+    syn::parse::Parser::parse2(parser, attr.tokens)
+}
+
 fn extract_meta(attrs: Vec<Attribute>, attr_name: &str) -> Result<Option<Meta>> {
-    let macro_attrs = attrs
+    let mut macro_attrs = attrs
         .into_iter()
         .filter(|attr| attr.path.is_ident(attr_name))
         .collect::<Vec<Attribute>>();
@@ -58,8 +67,7 @@ fn extract_meta(attrs: Vec<Attribute>, attr_name: &str) -> Result<Option<Meta>> 
     if let Some(second) = macro_attrs.get(2) {
         return Err(Error::new_spanned(second, "duplicate attribute"));
     }
-
-    macro_attrs.first().map(Attribute::parse_meta).transpose()
+    macro_attrs.pop().map(parse_meta).transpose()
 }
 
 #[derive(Default)]
@@ -198,14 +206,24 @@ struct VisitorItemParams {
     exit: Option<Ident>,
 }
 
+fn add_segments(segments: &mut Vec<String>, segment: &PathSegment) {
+    if let PathArguments::AngleBracketed(ref args) = segment.arguments {
+        for arg in args.args.iter() {
+            if let GenericArgument::Type(Type::Path(path)) = arg {
+                let last_segment = path.path.segments.last().unwrap();
+                segments.push(last_segment.ident.to_string().to_case(Case::Snake));
+                add_segments(segments, last_segment);
+            }
+        }
+    }
+}
+
 fn visitor_method_name_from_path(struct_path: &Path, event: &str) -> Ident {
     let last_segment = struct_path.segments.last().unwrap();
+    let mut segments = vec![last_segment.ident.to_string().to_case(Case::Snake)];
+    add_segments(&mut segments, last_segment);
     Ident::new(
-        &format!(
-            "{}_{}",
-            event,
-            last_segment.ident.to_string().to_case(Case::Snake)
-        ),
+        &format!("{event}_{}", segments.join("_")),
         Span::call_site(),
     )
 }
@@ -348,7 +366,7 @@ fn visitor_route(path: &Path, item_params: VisitorItemParams, mutable: bool) -> 
     }
 }
 
-fn impl_drive(input: DeriveInput, mutable: bool) -> Result<TokenStream> {
+fn impl_drive(mut input: DeriveInput, mutable: bool) -> Result<TokenStream> {
     let mut params = Params::from_attrs(input.attrs, "drive")?;
     params.validate(&["skip"])?;
 
@@ -357,9 +375,6 @@ fn impl_drive(input: DeriveInput, mutable: bool) -> Result<TokenStream> {
         .map(Param::unit)
         .transpose()?
         .is_some();
-
-    let name = input.ident;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     let visitor = Ident::new(
         if mutable { "VisitorMut" } else { "Visitor" },
@@ -406,7 +421,27 @@ fn impl_drive(input: DeriveInput, mutable: bool) -> Result<TokenStream> {
     } else {
         None
     };
-
+    for ty in input.generics.type_params_mut() {
+        ty.colon_token = Some(Colon::default());
+        ty.bounds.push(TypeParamBound::Trait(TraitBound {
+            paren_token: None,
+            modifier: TraitBoundModifier::None,
+            lifetimes: None,
+            path: Path {
+                leading_colon: None,
+                segments: {
+                    let mut segments = Punctuated::new();
+                    segments.push(PathSegment {
+                        ident: impl_trait.clone(),
+                        arguments: PathArguments::None,
+                    });
+                    segments
+                },
+            },
+        }));
+    }
+    let name = input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     Ok(quote! {
         impl #impl_generics ::derive_visitor::#impl_trait for #name #ty_generics #where_clause {
             fn #method<V: ::derive_visitor::#visitor>(& #mut_modifier self, visitor: &mut V) {
@@ -547,4 +582,57 @@ fn drive_field(value_expr: &TokenStream, field: Field, mutable: bool) -> Result<
     Ok(quote! {
         #drive_fn(#value_expr, visitor);
     })
+}
+
+mod parsing {
+    use proc_macro2::Ident;
+    use syn::ext::IdentExt;
+    use syn::parse::{Parse, ParseStream};
+
+    use syn::{
+        parenthesized, token, Lit, LitBool, Meta, MetaList, MetaNameValue, NestedMeta, Path, Token,
+    };
+
+    fn parse_nested_meta(input: ParseStream) -> syn::Result<NestedMeta> {
+        if input.peek(Lit) && !(input.peek(LitBool) && input.peek2(Token![=])) {
+            input.parse().map(NestedMeta::Lit)
+        } else if input.peek(Ident::peek_any)
+            || input.peek(Token![::]) && input.peek3(Ident::peek_any)
+        {
+            let path = input.call(Path::parse)?;
+            Ok(NestedMeta::Meta(parse_meta_after_path(path, input)?))
+        } else {
+            Err(input.error("expected identifier or literal"))
+        }
+    }
+
+    pub fn parse_meta_after_path(path: Path, input: ParseStream) -> syn::Result<Meta> {
+        if input.peek(token::Paren) {
+            parse_meta_list_after_path(path, input).map(Meta::List)
+        } else if input.peek(Token![=]) {
+            parse_meta_name_value_after_path(path, input).map(Meta::NameValue)
+        } else {
+            Ok(Meta::Path(path))
+        }
+    }
+
+    fn parse_meta_list_after_path(path: Path, input: ParseStream) -> syn::Result<MetaList> {
+        let content;
+        Ok(MetaList {
+            path,
+            paren_token: parenthesized!(content in input),
+            nested: content.parse_terminated(parse_nested_meta)?,
+        })
+    }
+
+    fn parse_meta_name_value_after_path(
+        path: Path,
+        input: ParseStream,
+    ) -> syn::Result<MetaNameValue> {
+        Ok(MetaNameValue {
+            path,
+            eq_token: input.parse()?,
+            lit: input.parse()?,
+        })
+    }
 }

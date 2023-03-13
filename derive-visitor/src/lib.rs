@@ -140,7 +140,7 @@ pub use derive_visitor_macros::VisitorMut;
 use std::{any::Any, cell::Cell, marker::PhantomData};
 
 #[cfg(feature = "std-types-drive")]
-use std::ops::{Range, RangeBounds, RangeFrom, RangeInclusive, RangeTo, RangeToInclusive};
+use std::ops::{Range, RangeFrom, RangeInclusive, RangeTo, RangeToInclusive};
 use std::sync::{Arc, Mutex, RwLock};
 
 /// An interface for visiting arbitrary data structures.
@@ -747,7 +747,6 @@ trivial_impl!(String);
 #[cfg(feature = "std-types-drive")]
 mod drive_ranges {
     use super::*;
-    use std::ops::*;
 
     impl<T: Drive> Drive for Range<T> {
         fn drive<V: Visitor>(&self, visitor: &mut V) {

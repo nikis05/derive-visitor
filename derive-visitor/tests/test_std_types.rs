@@ -1,18 +1,19 @@
 #![cfg(feature = "std-types-drive")]
 
+use std::fmt::Debug;
 use std::ops::Range;
 
 use derive_visitor::{Drive, Visitor};
 
-#[derive(Default, Drive)]
-struct Top {
+#[derive(Debug, Default, PartialEq, Eq, Drive)]
+struct Top<T: Debug + Default + PartialEq + Eq> {
     s: String,
-    inner: Inner,
+    inner: T,
     s2: String,
     vec_field: Vec<u32>,
 }
 
-#[derive(Default, Drive)]
+#[derive(Debug, Default, PartialEq, Eq, Drive)]
 struct Inner {
     start: u32,
     end: u32,
@@ -21,7 +22,7 @@ struct Inner {
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Visitor)]
-#[visitor(String, u32)]
+#[visitor(String, u32, Top<Inner>(enter))]
 struct TestVisitor {
     all_strings: Vec<String>,
     sum_u32: u32,
@@ -43,6 +44,7 @@ impl TestVisitor {
         self.enter_leave_check -= n;
         assert_eq!(self.enter_leave_check, 0);
     }
+    fn enter_top_inner(&mut self, _top: &Top<Inner>) {}
 }
 
 #[test]
