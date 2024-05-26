@@ -38,6 +38,18 @@ impl TestVisitor {
     }
 }
 
+#[derive(Debug, Default, PartialEq, Eq, Visitor)]
+#[visitor(CountMe1(enter))]
+struct TestVisitor2 {
+    count1: usize,
+}
+
+impl TestVisitor2 {
+    fn enter_count_me_1(&mut self, _: &CountMe1) {
+        self.count1 += 1;
+    }
+}
+
 #[test]
 fn test_containers() {
     let mut top = Top::default();

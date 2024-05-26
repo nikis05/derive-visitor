@@ -409,7 +409,7 @@ fn impl_drive(input: DeriveInput, mutable: bool) -> Result<TokenStream> {
 
     Ok(quote! {
         impl #impl_generics ::derive_visitor::#impl_trait for #name #ty_generics #where_clause {
-            fn #method<V: ::derive_visitor::#visitor>(& #mut_modifier self, visitor: &mut V) {
+            fn #method<V: ::derive_visitor::#visitor + ?::std::marker::Sized>(& #mut_modifier self, visitor: &mut V) {
                 #enter_self
                 #drive_fields
                 #exit_self
@@ -477,7 +477,7 @@ fn drive_variant(variant: Variant, mutable: bool) -> Result<TokenStream> {
         })
         .collect::<Result<TokenStream>>()?;
     Ok(quote! {
-        Self::#name#destructuring => {
+        Self::#name #destructuring => {
             #fields
         }
     })

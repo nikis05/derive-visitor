@@ -73,6 +73,7 @@
 //! };
 //!
 //! example_directory.drive(&mut counter);
+//! // OR: counter.walk(&example_directory);
 //!
 //! assert_eq!(counter.files, 2);
 //! assert_eq!(counter.directories, 3);
@@ -114,6 +115,7 @@
 //! };
 //!
 //! my_tree.drive_mut(&mut Renamer{from: "old", to: "new"});
+//! // OR: Renamer { from: "old", to: "new" }.walk(&mut my_tree);
 //!
 //! assert_eq!(my_tree.name, "new parent");
 //! assert_eq!(my_tree.children[0].name, "new child");
@@ -240,6 +242,21 @@ use std::sync::{Arc, Mutex, RwLock};
 /// ```
 pub trait Visitor {
     fn visit(&mut self, item: &dyn Any, event: Event);
+
+    /// `visitor.walk(&drive)` as `drive.drive(&mut visitor)`
+    fn walk<D: Drive>(&mut self, drive: &D)
+    where
+        Self: Sized,
+    {
+        drive.drive(self);
+    }
+
+    fn walk_iter<'a, I: LeafIterator<'a>>(&mut self, iter: &mut I)
+    where
+        Self: Sized,
+    {
+        iter.drive(self);
+    }
 }
 
 /// An interface for visiting data structures and mutating them during the visit.
@@ -265,6 +282,14 @@ pub trait Visitor {
 /// ```
 pub trait VisitorMut {
     fn visit(&mut self, item: &mut dyn Any, event: Event);
+
+    /// `visitor.walk(&mut drive)` as `drive.drive_mut(&mut visitor)`
+    fn walk<D: DriveMut>(&mut self, drive: &mut D)
+    where
+        Self: Sized,
+    {
+        drive.drive_mut(self);
+    }
 }
 
 /// Create a visitor that only visits items of some specific type from a function or a closure.
@@ -346,6 +371,7 @@ impl<T: Any, F: FnMut(&mut T, Event)> VisitorMut for FnVisitor<T, F> {
 }
 
 /// Defines whether an item is being entered or exited by a visitor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
     Enter,
     Exit,
@@ -458,7 +484,7 @@ pub enum Event {
 /// }
 /// ```
 pub trait Drive: Any {
-    fn drive<V: Visitor>(&self, visitor: &mut V);
+    fn drive<V: Visitor + ?Sized>(&self, visitor: &mut V);
 }
 
 /// Drive a [`VisitorMut`] over this datastructure.
@@ -490,35 +516,47 @@ pub trait Drive: Any {
 /// assert_eq!(node.children[2].children.len(), 0);
 /// ```
 pub trait DriveMut: Any {
-    fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V);
+    fn drive_mut<V: VisitorMut + ?Sized>(&mut self, visitor: &mut V);
+}
+
+pub trait LeafIterator<'a>: Iterator<Item = (&'a dyn Any, Event)> {
+    fn drive<V: Visitor + ?Sized>(&mut self, visitor: &mut V) {
+        self.for_each(|(item, event)| visitor.visit(item, event));
+    }
+}
+
+impl<'a, T> LeafIterator<'a> for T where T: Iterator<Item = (&'a dyn Any, Event)> {}
+
+pub trait ToLeafIter {
+    fn to_leaf_iter(&self) -> impl LeafIterator<'_>;
 }
 
 // Helper trait to the generic `IntoIterator` Drive impl
 trait DerefAndDrive {
-    fn deref_and_drive<V: Visitor>(self, visitor: &mut V);
+    fn deref_and_drive<V: Visitor + ?Sized>(self, visitor: &mut V);
 }
 
 // Drives a VisitorMut over a mutable reference
 trait DerefAndDriveMut {
-    fn deref_and_drive_mut<V: VisitorMut>(self, visitor: &mut V);
+    fn deref_and_drive_mut<V: VisitorMut + ?Sized>(self, visitor: &mut V);
 }
 
 // Most collections iterate over item references, this is the trait impl that handles that case
 impl<T: Drive> DerefAndDrive for &T {
-    fn deref_and_drive<V: Visitor>(self, visitor: &mut V) {
+    fn deref_and_drive<V: Visitor + ?Sized>(self, visitor: &mut V) {
         self.drive(visitor);
     }
 }
 
 impl<T: DriveMut> DerefAndDriveMut for &mut T {
-    fn deref_and_drive_mut<V: VisitorMut>(self, visitor: &mut V) {
+    fn deref_and_drive_mut<V: VisitorMut + ?Sized>(self, visitor: &mut V) {
         self.drive_mut(visitor);
     }
 }
 
 // Map-like collections iterate over item references pairs
 impl<TK: Drive, TV: Drive> DerefAndDrive for (&TK, &TV) {
-    fn deref_and_drive<V: Visitor>(self, visitor: &mut V) {
+    fn deref_and_drive<V: Visitor + ?Sized>(self, visitor: &mut V) {
         self.0.drive(visitor);
         self.1.drive(visitor);
     }
@@ -526,7 +564,7 @@ impl<TK: Drive, TV: Drive> DerefAndDrive for (&TK, &TV) {
 
 // Map-like collections have mutable iterators that allow mutating only the value, not the key
 impl<TK, TV: DriveMut> DerefAndDriveMut for (TK, &mut TV) {
-    fn deref_and_drive_mut<V: VisitorMut>(self, visitor: &mut V) {
+    fn deref_and_drive_mut<V: VisitorMut + ?Sized>(self, visitor: &mut V) {
         self.1.drive_mut(visitor);
     }
 }
@@ -540,7 +578,7 @@ macro_rules! impl_drive_for_into_iterator {
             for<'a> &'a $type: IntoIterator,
             for<'a> <&'a $type as IntoIterator>::Item: DerefAndDrive,
         {
-            fn drive<V: Visitor>(&self, visitor: &mut V) {
+            fn drive<V: Visitor + ?Sized>(&self, visitor: &mut V) {
                 for item in self {
                     item.deref_and_drive(visitor);
                 }
@@ -553,7 +591,7 @@ macro_rules! impl_drive_for_into_iterator {
             for<'a> &'a mut $type: IntoIterator,
             for<'a> <&'a mut $type as IntoIterator>::Item: DerefAndDriveMut,
         {
-            fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) {
+            fn drive_mut<V: VisitorMut + ?Sized>(&mut self, visitor: &mut V) {
                 for item in self {
                     item.deref_and_drive_mut(visitor);
                 }
@@ -579,7 +617,7 @@ impl<T> Drive for Box<T>
 where
     T: Drive,
 {
-    fn drive<V: Visitor>(&self, visitor: &mut V) {
+    fn drive<V: Visitor + ?Sized>(&self, visitor: &mut V) {
         (**self).drive(visitor);
     }
 }
@@ -588,7 +626,7 @@ impl<T> DriveMut for Box<T>
 where
     T: DriveMut,
 {
-    fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) {
+    fn drive_mut<V: VisitorMut + ?Sized>(&mut self, visitor: &mut V) {
         (**self).drive_mut(visitor);
     }
 }
@@ -597,7 +635,7 @@ impl<T> Drive for Arc<T>
 where
     T: Drive,
 {
-    fn drive<V: Visitor>(&self, visitor: &mut V) {
+    fn drive<V: Visitor + ?Sized>(&self, visitor: &mut V) {
         (**self).drive(visitor);
     }
 }
@@ -606,7 +644,7 @@ impl<T> Drive for Mutex<T>
 where
     T: Drive,
 {
-    fn drive<V: Visitor>(&self, visitor: &mut V) {
+    fn drive<V: Visitor + ?Sized>(&self, visitor: &mut V) {
         let lock = self.lock().unwrap();
         lock.drive(visitor);
     }
@@ -616,7 +654,7 @@ impl<T> Drive for RwLock<T>
 where
     T: Drive,
 {
-    fn drive<V: Visitor>(&self, visitor: &mut V) {
+    fn drive<V: Visitor + ?Sized>(&self, visitor: &mut V) {
         let lock = self.read().unwrap();
         lock.drive(visitor);
     }
@@ -626,7 +664,7 @@ impl<T> DriveMut for Arc<Mutex<T>>
 where
     T: DriveMut,
 {
-    fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) {
+    fn drive_mut<V: VisitorMut + ?Sized>(&mut self, visitor: &mut V) {
         let mut lock = self.lock().unwrap();
         lock.drive_mut(visitor);
     }
@@ -636,7 +674,7 @@ impl<T> DriveMut for Arc<RwLock<T>>
 where
     T: DriveMut,
 {
-    fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) {
+    fn drive_mut<V: VisitorMut + ?Sized>(&mut self, visitor: &mut V) {
         let mut lock = self.write().unwrap();
         lock.drive_mut(visitor);
     }
@@ -646,7 +684,7 @@ impl<T> Drive for Cell<T>
 where
     T: Drive + Copy,
 {
-    fn drive<V: Visitor>(&self, visitor: &mut V) {
+    fn drive<V: Visitor + ?Sized>(&self, visitor: &mut V) {
         self.get().drive(visitor);
     }
 }
@@ -655,17 +693,17 @@ impl<T> DriveMut for Cell<T>
 where
     T: DriveMut,
 {
-    fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) {
+    fn drive_mut<V: VisitorMut + ?Sized>(&mut self, visitor: &mut V) {
         self.get_mut().drive_mut(visitor);
     }
 }
 
 impl Drive for () {
-    fn drive<V: Visitor>(&self, _visitor: &mut V) {}
+    fn drive<V: Visitor + ?Sized>(&self, _visitor: &mut V) {}
 }
 
 impl DriveMut for () {
-    fn drive_mut<V: VisitorMut>(&mut self, _visitor: &mut V) {}
+    fn drive_mut<V: VisitorMut + ?Sized>(&mut self, _visitor: &mut V) {}
 }
 
 macro_rules! tuple_impls {
@@ -677,7 +715,7 @@ macro_rules! tuple_impls {
                     $type: Drive
                 ),+
             {
-                fn drive<V: Visitor>(&self, visitor: &mut V) {
+                fn drive<V: Visitor + ?Sized>(&self, visitor: &mut V) {
                     $(
                         self.$field.drive(visitor);
                     )+
@@ -690,7 +728,7 @@ macro_rules! tuple_impls {
                     $type: DriveMut
                 ),+
             {
-                fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) {
+                fn drive_mut<V: VisitorMut + ?Sized>(&mut self, visitor: &mut V) {
                     $(
                         self.$field.drive_mut(visitor);
                     )+
