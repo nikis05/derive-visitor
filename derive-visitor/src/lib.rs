@@ -351,7 +351,7 @@ pub enum Event {
     Exit,
 }
 
-/// A data structure that can drive a [visitor](Visitor) through iself.
+/// A data structure that can drive a [visitor](Visitor) through itself.
 ///
 /// Derive or implement this trait for any type that you want to be able to
 /// traverse with a visitor.
@@ -531,37 +531,49 @@ impl<TK, TV: DriveMut> DerefAndDriveMut for (TK, &mut TV) {
     }
 }
 
-// The following should be able to handle almost all container types:
-// array, BTreeMap, BTreeSet, BinaryHeap, slice, HashMap, HashSet, LinkedList, Vec, VecDeque
-//
-// It even handles Option, since it has a trivial IntoIterator impl.
-impl<T> Drive for T
-where
-    T: 'static,
-    // HRTB, because this needs to be true for late-bound lifetimes,
-    // as both &self and &visitor have anonymous lifetimes.
-    for<'a> &'a T: IntoIterator,
-    for<'a> <&'a T as IntoIterator>::Item: DerefAndDrive,
-{
-    fn drive<V: Visitor>(&self, visitor: &mut V) {
-        for item in self {
-            item.deref_and_drive(visitor);
+// Implement Drive and DriveMut for container types in standard library.
+macro_rules! impl_drive_for_into_iterator {
+    ( $type:ty ; $($generics:tt)+ ) => {
+        impl< $($generics)+ > Drive for $type
+        where
+            $type: 'static,
+            for<'a> &'a $type: IntoIterator,
+            for<'a> <&'a $type as IntoIterator>::Item: DerefAndDrive,
+        {
+            fn drive<V: Visitor>(&self, visitor: &mut V) {
+                for item in self {
+                    item.deref_and_drive(visitor);
+                }
+            }
         }
-    }
+
+        impl< $($generics)+ > DriveMut for $type
+        where
+            $type: 'static,
+            for<'a> &'a mut $type: IntoIterator,
+            for<'a> <&'a mut $type as IntoIterator>::Item: DerefAndDriveMut,
+        {
+            fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) {
+                for item in self {
+                    item.deref_and_drive_mut(visitor);
+                }
+            }
+        }
+    };
 }
 
-impl<T> DriveMut for T
-where
-    T: 'static,
-    for<'a> &'a mut T: IntoIterator,
-    for<'a> <&'a mut T as IntoIterator>::Item: DerefAndDriveMut,
-{
-    fn drive_mut<V: VisitorMut>(&mut self, visitor: &mut V) {
-        for item in self {
-            item.deref_and_drive_mut(visitor);
-        }
-    }
-}
+impl_drive_for_into_iterator! { [T] ; T }
+impl_drive_for_into_iterator! { Vec<T> ; T }
+impl_drive_for_into_iterator! { std::collections::BTreeSet<T> ; T }
+impl_drive_for_into_iterator! { std::collections::BinaryHeap<T> ; T }
+impl_drive_for_into_iterator! { std::collections::HashSet<T> ; T }
+impl_drive_for_into_iterator! { std::collections::LinkedList<T> ; T }
+impl_drive_for_into_iterator! { std::collections::VecDeque<T> ; T }
+impl_drive_for_into_iterator! { Option<T> ; T }
+impl_drive_for_into_iterator! { Result<T, U> ; T, U }
+impl_drive_for_into_iterator! { std::collections::BTreeMap<T, U> ; T, U }
+impl_drive_for_into_iterator! { std::collections::HashMap<T, U> ; T, U }
+impl_drive_for_into_iterator! { [T; N] ; T, const N: usize }
 
 impl<T> Drive for Box<T>
 where
