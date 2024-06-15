@@ -242,6 +242,12 @@ pub trait Visitor {
     fn visit(&mut self, item: &dyn Any, event: Event);
 }
 
+impl<V: Visitor> Visitor for &mut V {
+    fn visit(&mut self, obj: &dyn Any, event: Event) {
+        (**self).visit(obj, event)
+    }
+}
+
 /// An interface for visiting data structures and mutating them during the visit.
 ///
 /// It works exactly the same as [Visitor], but it takes a mutable reference to the visited element.
@@ -265,6 +271,12 @@ pub trait Visitor {
 /// ```
 pub trait VisitorMut {
     fn visit(&mut self, item: &mut dyn Any, event: Event);
+}
+
+impl<V: VisitorMut> VisitorMut for &mut V {
+    fn visit(&mut self, obj: &mut dyn Any, event: Event) {
+        (**self).visit(obj, event)
+    }
 }
 
 /// Create a visitor that only visits items of some specific type from a function or a closure.
@@ -345,7 +357,144 @@ impl<T: Any, F: FnMut(&mut T, Event)> VisitorMut for FnVisitor<T, F> {
     }
 }
 
+/// A builder to easily construct stateful visitors.
+///
+/// Used as follows::
+/// ```rust
+/// # use derive_visitor::Drive;
+/// # type Directory = bool;
+/// # #[derive(Drive)]
+/// # struct File {
+/// #     #[drive(skip)]
+/// #     name: String,
+/// # }
+/// # use derive_visitor::VisitorBuilder;
+/// // Build a visitor with mutable access to `state` that will be called on `Directory`s and `File`s.
+/// let mut count = 0;
+/// let mut visitor = VisitorBuilder::new(&mut count)
+///     .on_enter(|state, x: &File| { *state += 1; })
+///     .on_enter(|state, x: &Directory| { *state += 1; });
+///
+/// // Visit a value.
+/// let val = File { name: "main.rs".to_string() };
+/// val.drive(&mut visitor);
+/// assert_eq!(count, 1);
+/// ```
+pub struct VisitorBuilder<'a, S, F> {
+    state: &'a mut S,
+    visit: F,
+}
+
+impl<'a, S> VisitorBuilder<'a, S, fn(&mut S, &dyn Any, Event)> {
+    pub fn new(state: &'a mut S) -> Self {
+        Self {
+            state,
+            visit: |_, _, _| {},
+        }
+    }
+}
+
+impl<'a, S> VisitorBuilder<'a, S, fn(&mut S, &mut dyn Any, Event)> {
+    pub fn new_mut(state: &'a mut S) -> Self {
+        Self {
+            state,
+            visit: |_, _, _| {},
+        }
+    }
+}
+
+impl<'a, S, F> VisitorBuilder<'a, S, F>
+where
+    F: FnMut(&mut S, &dyn Any, Event),
+{
+    /// Makes a new visitor that builds on top of this one by additionally calling `f` on any
+    /// object of type `T`.
+    pub fn on<T: Any>(
+        self,
+        mut f: impl FnMut(&mut S, &T, Event),
+    ) -> VisitorBuilder<'a, S, impl FnMut(&mut S, &dyn Any, Event)> {
+        let VisitorBuilder { state, mut visit } = self;
+        VisitorBuilder {
+            state,
+            visit: move |state: &mut S, obj: &dyn Any, event| {
+                visit(&mut *state, &*obj, event);
+                if let Some(obj) = obj.downcast_ref::<T>() {
+                    f(state, obj, event)
+                }
+            },
+        }
+    }
+
+    /// Makes a new visitor that builds on top of this one by additionally calling `f` when
+    /// entering an object of type `T`.
+    pub fn on_enter<T: Any>(
+        self,
+        mut f: impl FnMut(&mut S, &T),
+    ) -> VisitorBuilder<'a, S, impl FnMut(&mut S, &dyn Any, Event)> {
+        self.on(move |state, obj, e| {
+            if matches!(e, Event::Enter) {
+                f(state, obj)
+            }
+        })
+    }
+}
+
+impl<'a, S, F> VisitorBuilder<'a, S, F>
+where
+    F: FnMut(&mut S, &mut dyn Any, Event),
+{
+    /// Makes a new visitor that builds on top of this one by additionally calling `f` on any
+    /// object of type `T`.
+    pub fn on_mut<T: Any>(
+        self,
+        mut f: impl FnMut(&mut S, &mut T, Event),
+    ) -> VisitorBuilder<'a, S, impl FnMut(&mut S, &mut dyn Any, Event)> {
+        let VisitorBuilder { state, mut visit } = self;
+        VisitorBuilder {
+            state,
+            visit: move |state: &mut S, obj: &mut dyn Any, event| {
+                visit(&mut *state, &mut *obj, event);
+                if let Some(obj) = obj.downcast_mut::<T>() {
+                    f(state, obj, event)
+                }
+            },
+        }
+    }
+
+    /// Makes a new visitor that builds on top of this one by additionally calling `f` when
+    /// entering an object of type `T`.
+    pub fn on_enter_mut<T: Any>(
+        self,
+        mut f: impl FnMut(&mut S, &mut T),
+    ) -> VisitorBuilder<'a, S, impl FnMut(&mut S, &mut dyn Any, Event)> {
+        self.on_mut(move |state, obj, e| {
+            if matches!(e, Event::Enter) {
+                f(state, obj)
+            }
+        })
+    }
+}
+
+impl<S, F> Visitor for VisitorBuilder<'_, S, F>
+where
+    F: FnMut(&mut S, &dyn Any, Event),
+{
+    fn visit(&mut self, obj: &dyn Any, event: Event) {
+        (self.visit)(self.state, obj, event)
+    }
+}
+
+impl<S, F> VisitorMut for VisitorBuilder<'_, S, F>
+where
+    F: FnMut(&mut S, &mut dyn Any, Event),
+{
+    fn visit(&mut self, obj: &mut dyn Any, event: Event) {
+        (self.visit)(self.state, obj, event)
+    }
+}
+
 /// Defines whether an item is being entered or exited by a visitor.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Event {
     Enter,
     Exit,
