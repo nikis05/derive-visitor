@@ -242,6 +242,12 @@ pub trait Visitor {
     fn visit(&mut self, item: &dyn Any, event: Event);
 }
 
+impl<V: Visitor> Visitor for &mut V {
+    fn visit(&mut self, obj: &dyn Any, event: Event) {
+        (**self).visit(obj, event)
+    }
+}
+
 /// An interface for visiting data structures and mutating them during the visit.
 ///
 /// It works exactly the same as [Visitor], but it takes a mutable reference to the visited element.
@@ -265,6 +271,12 @@ pub trait Visitor {
 /// ```
 pub trait VisitorMut {
     fn visit(&mut self, item: &mut dyn Any, event: Event);
+}
+
+impl<V: VisitorMut> VisitorMut for &mut V {
+    fn visit(&mut self, obj: &mut dyn Any, event: Event) {
+        (**self).visit(obj, event)
+    }
 }
 
 /// Create a visitor that only visits items of some specific type from a function or a closure.
