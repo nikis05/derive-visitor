@@ -346,6 +346,7 @@ impl<T: Any, F: FnMut(&mut T, Event)> VisitorMut for FnVisitor<T, F> {
 }
 
 /// Defines whether an item is being entered or exited by a visitor.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Event {
     Enter,
     Exit,
