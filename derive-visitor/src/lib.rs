@@ -301,7 +301,7 @@ pub fn visitor_fn_mut<T, F: FnMut(&mut T, Event)>(fun: F) -> FnVisitor<T, F> {
     }
 }
 
-/// Similar to [visitor_fn](visitor_fn), but the closure will only be called on [Event::Enter](Event::Enter).
+/// Similar to [`visitor_fn`], but the closure will only be called on [Event::Enter](Event::Enter).
 pub fn visitor_enter_fn<T, F: FnMut(&T)>(mut fun: F) -> FnVisitor<T, impl FnMut(&T, Event)> {
     visitor_fn(move |item, event| {
         if let Event::Enter = event {
@@ -321,7 +321,27 @@ pub fn visitor_enter_fn_mut<T, F: FnMut(&mut T)>(
     })
 }
 
-/// Type returned by [visitor_fn](visitor_fn).
+/// Similar to [`visitor_fn`], but the closure will only be called on [Event::Exit](Event::Exit).
+pub fn visitor_exit_fn<T, F: FnMut(&T)>(mut fun: F) -> FnVisitor<T, impl FnMut(&T, Event)> {
+    visitor_fn(move |item, event| {
+        if let Event::Exit = event {
+            fun(item);
+        }
+    })
+}
+
+/// Similar to [`visitor_fn_mut`], but the closure will only be called on [Event::Exit](Event::Exit).
+pub fn visitor_exit_fn_mut<T, F: FnMut(&mut T)>(
+    mut fun: F,
+) -> FnVisitor<T, impl FnMut(&mut T, Event)> {
+    visitor_fn_mut(move |item, event| {
+        if let Event::Exit = event {
+            fun(item);
+        }
+    })
+}
+
+/// Type returned by [`visitor_fn`].
 pub struct FnVisitor<T, F> {
     marker: PhantomData<T>,
     fun: F,
