@@ -1,10 +1,10 @@
-#![cfg(feature = "std-types-drive")]
+#![cfg(feature = "std-types-walk")]
 
 use std::ops::Range;
 
-use derive_visitor::{Drive, Visitor};
+use derive_visitor::{Visitor, Walk};
 
-#[derive(Default, Drive)]
+#[derive(Default, Walk)]
 struct Top {
     s: String,
     inner: Inner,
@@ -12,7 +12,7 @@ struct Top {
     vec_field: Vec<u32>,
 }
 
-#[derive(Default, Drive)]
+#[derive(Default, Walk)]
 struct Inner {
     start: u32,
     end: u32,
@@ -35,11 +35,11 @@ impl TestVisitor {
     fn exit_string(&mut self, s: &str) {
         assert_eq!(self.all_strings.last().unwrap(), s);
     }
-    fn enter_u_32(&mut self, n: &u32) {
+    fn enter_u32(&mut self, n: &u32) {
         self.sum_u32 += n;
         self.enter_leave_check += n;
     }
-    fn exit_u_32(&mut self, n: &u32) {
+    fn exit_u32(&mut self, n: &u32) {
         self.enter_leave_check -= n;
         assert_eq!(self.enter_leave_check, 0);
     }
@@ -59,7 +59,7 @@ fn test_std_types() {
         vec_field: vec![1, 2, 3],
     };
     let mut test_visitor = TestVisitor::default();
-    top.drive(&mut test_visitor);
+    top.walk(&mut test_visitor);
     assert_eq!(
         test_visitor,
         TestVisitor {

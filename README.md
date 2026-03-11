@@ -5,31 +5,31 @@ abstract trees and hierarchies of all kinds.
 The main building blocks of this crate are two derivable traits:
 
 - [Visitor](https://docs.rs/derive-visitor/0.1.1/derive_visitor/trait.Visitor.html) implementations walk through a data structures and accumulates some information;
-- [Drive](https://docs.rs/derive-visitor/0.1.1/derive_visitor/trait.Drive.html) implementations are data structures that know how to drive a visitor through themselves.
+- [Walk](https://docs.rs/derive-visitor/0.1.1/derive_visitor/trait.Walk.html) implementations are data structures that know how to walk a visitor through themselves.
 
 Please refer to these traits' documentation for more details.
 
 ## Example
 
 ```rust
-use derive_visitor::{Visitor, Drive};
+use derive_visitor::{Visitor, Walk};
 
-#[derive(Drive)]
+#[derive(Walk)]
 struct Directory {
-    #[drive(skip)]
+    #[walk(skip)]
     name: String,
     items: Vec<DirectoryItem>,
 }
 
-#[derive(Drive)]
+#[derive(Walk)]
 enum DirectoryItem {
     File(File),
     Directory(Directory),
 }
 
-#[derive(Drive)]
+#[derive(Walk)]
 struct File {
-    #[drive(skip)]
+    #[walk(skip)]
     name: String,
 }
 
@@ -69,7 +69,7 @@ let example_directory = Directory {
     ],
 };
 
-example_directory.drive(&mut counter);
+example_directory.walk(&mut counter);
 
 assert_eq!(counter.files, 2);
 assert_eq!(counter.directories, 3);

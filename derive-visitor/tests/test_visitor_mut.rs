@@ -1,6 +1,6 @@
-use derive_visitor::{DriveMut, VisitorMut};
+use derive_visitor::{VisitorMut, WalkMut};
 
-#[derive(DriveMut)]
+#[derive(WalkMut)]
 struct Chain {
     next: Option<Box<Chain>>,
 }
@@ -40,6 +40,6 @@ fn test() {
     };
     assert_eq!(chain.depth(), 2);
     let mut cutter = ChainCutter { cut_at_depth: 1 };
-    chain.drive_mut(&mut cutter);
+    chain.walk_mut(&mut cutter);
     assert_eq!(chain.depth(), 1);
 }
